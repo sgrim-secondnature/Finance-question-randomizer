@@ -131,6 +131,15 @@
   let CC = null;   // cached colors  – plain string map, avoids getComputedStyle per frame
   let CF = '';     // cached font    – heading font string
   let FONTS = null; // cached font strings – avoids template literal allocation per frame
+  // Pre-cached rgba strings (avoids string alloc; JS may intern these but this is guaranteed)
+  const RGBA = {
+    scrim30:  'rgba(9, 9, 73, 0.3)',
+    scrim35:  'rgba(9, 9, 73, 0.35)',
+    scrim45:  'rgba(9, 9, 73, 0.45)',
+    shadow09: 'rgba(0,0,0,0.09)',
+    shadow08: 'rgba(0,0,0,0.08)',
+    shadow05: 'rgba(0,0,0,0.05)',
+  };
   let skyGrad    = null;  // cached sky gradient
   let accentGrad = null;  // cached ground-accent gradient
   let pipeGrad   = null;  // cached pipe body gradient (translated per pipe)
@@ -150,7 +159,11 @@
   let gameOpen   = false;
   let hasPlayedOnce = false; // true after the first flap — keeps header diff btn visible on reset
   let canvas, ctx, rafId;
-  let bird, pipes, clouds, score, state; // 'idle' | 'play' | 'dead' | 'paused'
+  let bird, clouds, score, state; // 'idle' | 'play' | 'dead' | 'paused'
+  let pipePool = null;         // pre-allocated pipe objects (fixed array of 5)
+  let pipeActiveCount = 0;     // number of active pipes in the pool
+  let planePool = null;        // pre-allocated plane objects (fixed array of 3)
+  let planeActiveCount = 0;    // number of active planes in the pool
   let lastPipeTime, deadTime, frameTime;
   let globalTime = 0; // always-incrementing time for ambient animations
   let pausedTime = 0; // timestamp when we paused (to fix pipe-spawn drift)
@@ -199,8 +212,11 @@
   };
   let settingsHover  = false;  // is the mouse over the settings heart?
   let settingsOpen   = false;  // is the difficulty picker visible?
+  let _settingsBtnX  = 0;     // computed once in startGame()
+  let _settingsBtnY  = 0;     // computed once in startGame()
   let mouseX = -1, mouseY = -1; // canvas-local mouse coords (for hover)
   let _currentCursor = '';      // tracks last cursor value to avoid redundant DOM writes
+  const _coords = { x: 0, y: 0 }; // reusable return object for canvasCoords()
   let _cachedDiffLayout = null; // cached diffPickerLayout — computed once in openDiffPicker
 
   /* --- In-game controls hint (fades after a few seconds) ----- */
@@ -450,14 +466,65 @@
     }
   }
 
+  /* --- Loading screen (drawn on canvas during async init) ----- */
+  let _loadingRafId = null;
+
+  function drawLoadingScreen(t) {
+    const W = CFG.width, H = CFG.height;
+
+    // Background — match app light gradient
+    ctx.fillStyle = CC ? CC.light : '#FBF6F6';
+    ctx.fillRect(0, 0, W, H);
+
+    // Ground bar at bottom
+    const navy = CC ? CC.navy : '#090949';
+    ctx.fillStyle = navy;
+    ctx.fillRect(0, H - CFG.groundH, W, CFG.groundH);
+
+    // Pulsing dots animation
+    const dotCount = 3;
+    const dotR = 4;
+    const dotGap = 16;
+    const baseX = W / 2 - ((dotCount - 1) * dotGap) / 2;
+    const baseY = H / 2 + 20;
+    const violet = CC ? CC.violet : '#6500D9';
+
+    for (let i = 0; i < dotCount; i++) {
+      const phase = (t * 0.004 - i * 0.5);
+      const bounce = Math.sin(phase % (Math.PI * 2)) * 6;
+      const alpha = 0.35 + Math.max(0, Math.sin(phase % (Math.PI * 2))) * 0.65;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = violet;
+      ctx.beginPath();
+      ctx.arc(baseX + i * dotGap, baseY - Math.max(0, -bounce), dotR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // "Loading" text
+    const font = CF || '"Poppins", sans-serif';
+    ctx.font = `600 13px ${font}`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = navy;
+    ctx.globalAlpha = 0.45;
+    ctx.fillText('Loading', W / 2, baseY + 26);
+    ctx.globalAlpha = 1;
+
+    _loadingRafId = requestAnimationFrame(drawLoadingScreen);
+  }
+
+  function stopLoadingScreen() {
+    if (_loadingRafId) {
+      cancelAnimationFrame(_loadingRafId);
+      _loadingRafId = null;
+    }
+  }
+
   /* --- Game Engine ------------------------------------------- */
   async function startGame() {
     canvas = $('#flappy-canvas');
     if (!canvas) return;
     ctx = canvas.getContext('2d');
-
-    // Load banner texts from JSON (non-blocking — fallback is already in place)
-    loadBannerTexts();
 
     // --- Cache all CSS design tokens ONCE (avoids getComputedStyle per frame) ---
     CC = {
@@ -484,6 +551,10 @@
       deadRetry:`600 12px ${CF}`,
     };
 
+    // Pre-compute settings button center (depends only on CFG.width which is constant)
+    _settingsBtnX = CFG.width - SETTINGS_BTN.pad - SETTINGS_BTN.size / 2;
+    _settingsBtnY = SETTINGS_BTN.pad + SETTINGS_BTN.size / 2;
+
     // Responsive: compute display size to fit within the viewport
     const maxCssW = Math.min(BASE_W, window.innerWidth - 48);
     const cssScale = maxCssW / BASE_W;
@@ -498,6 +569,12 @@
     canvas.style.width  = cssW + 'px';
     canvas.style.height = cssH + 'px';
     ctx.scale(dpr, dpr);
+
+    // --- Show loading screen while assets load ---
+    drawLoadingScreen(performance.now());
+
+    // Load banner texts from JSON (non-blocking — fallback is already in place)
+    loadBannerTexts();
 
     // --- Build reusable gradients (coordinates are constant) ---
     skyGrad = ctx.createLinearGradient(0, 0, 0, CFG.height - CFG.groundH);
@@ -515,6 +592,20 @@
     pipeGrad.addColorStop(1, CC.midviolet);
 
     heartImg = await loadHeartImage(CC.violet);
+
+    // --- Stop loading screen, finish init ---
+    stopLoadingScreen();
+
+    // Pre-allocate pipe pool (5 slots — max ~3 on screen + buffer)
+    pipePool = [];
+    for (let i = 0; i < 5; i++) {
+      pipePool[i] = { x: 0, topH: 0, scored: false };
+    }
+    pipeActiveCount = 0;
+
+    // Pre-allocate bird object once (resetGameState mutates it, never recreates)
+    bird = { y: 0, vy: 0, rot: 0 };
+
     initClouds();
     initBackground();
     applyDifficulty(currentDifficulty); // load saved (or default) difficulty
@@ -542,8 +633,10 @@
   }
 
   function resetGameState() {
-    bird  = { y: CFG.height / 2 - 30, vy: 0, rot: 0 };
-    pipes = [];
+    bird.y   = CFG.height / 2 - 30;
+    bird.vy  = 0;
+    bird.rot = 0;
+    pipeActiveCount = 0;
     score = 0;
     state = 'idle';
     lastPipeTime = 0;
@@ -585,23 +678,13 @@
     const scaleY = CFG.height / rect.height;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top)  * scaleY,
-    };
-  }
-
-  // Settings heart center (top-right)
-  function settingsBtnCenter() {
-    return {
-      x: CFG.width  - SETTINGS_BTN.pad - SETTINGS_BTN.size / 2,
-      y: SETTINGS_BTN.pad + SETTINGS_BTN.size / 2,
-    };
+    _coords.x = (clientX - rect.left) * scaleX;
+    _coords.y = (clientY - rect.top)  * scaleY;
+    return _coords;
   }
 
   function isInsideSettingsBtn(cx, cy) {
-    const c = settingsBtnCenter();
-    const dx = cx - c.x, dy = cy - c.y;
+    const dx = cx - _settingsBtnX, dy = cy - _settingsBtnY;
     return dx * dx + dy * dy <= SETTINGS_BTN.hoverR * SETTINGS_BTN.hoverR;
   }
 
@@ -621,9 +704,8 @@
   // Layout for the difficulty picker card (centered, just below the settings heart)
   function diffPickerLayout() {
     const cardW = 150, cardH = 130, btnH = 28, btnGap = 6, btnPadX = 14, topPad = 32;
-    const sc = settingsBtnCenter();
-    const cx = Math.min(sc.x - cardW / 2, CFG.width - cardW - 6);
-    const cy = sc.y + SETTINGS_BTN.size / 2 + 8;
+    const cx = Math.min(_settingsBtnX - cardW / 2, CFG.width - cardW - 6);
+    const cy = _settingsBtnY + SETTINGS_BTN.size / 2 + 8;
     const buttons = [];
     for (let i = 0; i < DIFF_KEYS.length; i++) {
       buttons.push({
@@ -767,9 +849,15 @@
       midClouds:   [],
       buildings:   [],
       trees:       [],
-      planes:      [],
       groundDeco:  [],
     };
+
+    // Pre-allocate plane pool (3 slots — max 2 concurrent + buffer)
+    planePool = [];
+    for (let i = 0; i < 3; i++) {
+      planePool[i] = { x: 0, y: 0, dir: 1, bannerText: '', bannerW: 0, wobble: 0, speed: 0 };
+    }
+    planeActiveCount = 0;
 
     const W = CFG.width;
     const H = CFG.height;
@@ -901,29 +989,37 @@
 
   let nextPlaneTime = 0;
   function spawnPlane() {
+    if (planeActiveCount >= planePool.length) return; // pool full
     const bannerText = BANNER_TEXTS[Math.floor(Math.random() * BANNER_TEXTS.length)];
 
-    // Pick a y that's at least PLANE_ALT_SEP away from every existing plane
+    // Pick a y that's at least PLANE_ALT_SEP away from every active plane
     let y, attempts = 0;
     do {
       y = PLANE_ALT_MIN + Math.random() * (PLANE_ALT_MAX - PLANE_ALT_MIN);
       attempts++;
     } while (
       attempts < 20 &&
-      bgLayers.planes.some(p => Math.abs(p.y - y) < PLANE_ALT_SEP)
+      _planeAltConflict(y)
     );
 
     const goingRight = Math.random() < 0.5;
-    bgLayers.planes.push({
-      x: goingRight ? -180 : CFG.width + 180,
-      y,
-      dir: goingRight ? 1 : -1,
-      bannerText,
-      bannerW: bannerText.length * 6.5 + 24,
-      wobble: Math.random() * 1000,
-      speed: BG.planeSpeed,
-    });
+    const p = planePool[planeActiveCount++];
+    p.x = goingRight ? -180 : CFG.width + 180;
+    p.y = y;
+    p.dir = goingRight ? 1 : -1;
+    p.bannerText = bannerText;
+    p.bannerW = bannerText.length * 6.5 + 24;
+    p.wobble = Math.random() * 1000;
+    p.speed = BG.planeSpeed;
     nextPlaneTime = performance.now() + 8000 + Math.random() * 15000;
+  }
+
+  /** Check if y conflicts with any active plane altitude. */
+  function _planeAltConflict(y) {
+    for (let i = 0; i < planeActiveCount; i++) {
+      if (Math.abs(planePool[i].y - y) < PLANE_ALT_SEP) return true;
+    }
+    return false;
   }
 
 
@@ -947,18 +1043,22 @@
       if (c.x + c.w < -20) { c.x = W + 20 + Math.random() * 40; c.y = 60 + Math.random() * 100; }
     }
 
-    // Planes — always move (they fly independently of ground scroll)
-    for (let i = bgLayers.planes.length - 1; i >= 0; i--) {
-      const p = bgLayers.planes[i];
+    // Planes — always move (pool-based, fly independently of ground scroll)
+    for (let i = planeActiveCount - 1; i >= 0; i--) {
+      const p = planePool[i];
       p.x += p.dir * p.speed * CFG.pipeSpeed * dt * ambientMul;
       if ((p.dir > 0 && p.x > W + 250 + p.bannerW) || (p.dir < 0 && p.x < -250 - p.bannerW)) {
-        // Swap-and-pop: O(1) removal (draw order doesn't matter for planes)
-        const last = bgLayers.planes.length - 1;
-        if (i !== last) bgLayers.planes[i] = bgLayers.planes[last];
-        bgLayers.planes.pop();
+        // Swap with last active, decrement count (pool entries stay allocated)
+        const last = planeActiveCount - 1;
+        if (i !== last) {
+          const tmp = planePool[i];
+          planePool[i] = planePool[last];
+          planePool[last] = tmp;
+        }
+        planeActiveCount--;
       }
     }
-    if (now > nextPlaneTime && bgLayers.planes.length < 2) {
+    if (now > nextPlaneTime && planeActiveCount < 2) {
       spawnPlane();
     }
 
@@ -1048,9 +1148,9 @@
     ctx.fillStyle = cyan;
     drawCloudsBatched(bgLayers.midClouds);
 
-    // Layer 3: Planes with banners
-    for (const p of bgLayers.planes) {
-      drawPlane(p, navy, magenta, violet);
+    // Layer 3: Planes with banners (from pool)
+    for (let i = 0; i < planeActiveCount; i++) {
+      drawPlane(planePool[i], navy, magenta, violet);
     }
 
     // Layer 4: Buildings
@@ -1373,25 +1473,33 @@
       return;
     }
 
-    // Spawn pipes
-    if (now - lastPipeTime > CFG.pipeSpawn) {
+    // Spawn pipes (from pre-allocated pool)
+    if (now - lastPipeTime > CFG.pipeSpawn && pipeActiveCount < pipePool.length) {
       const minTop = 60;
       const maxTop = CFG.height - CFG.groundH - CFG.pipeGap - 60;
       const topH   = minTop + Math.random() * (maxTop - minTop);
-      pipes.push({ x: CFG.width, topH, scored: false });
+      const p = pipePool[pipeActiveCount++];
+      p.x = CFG.width;
+      p.topH = topH;
+      p.scored = false;
       lastPipeTime = now;
     }
 
-    // Move & collide pipes
-    for (let i = pipes.length - 1; i >= 0; i--) {
-      const p = pipes[i];
+    // Move & collide pipes (pool-based swap-and-pop)
+    for (let i = pipeActiveCount - 1; i >= 0; i--) {
+      const p = pipePool[i];
       p.x -= CFG.pipeSpeed * dt;
 
-      // Remove off-screen (swap-and-pop: O(1), draw order doesn't matter)
+      // Remove off-screen (swap with last active, decrement count)
       if (p.x + CFG.pipeWidth < 0) {
-        const last = pipes.length - 1;
-        if (i !== last) pipes[i] = pipes[last];
-        pipes.pop();
+        const last = pipeActiveCount - 1;
+        if (i !== last) {
+          // Swap pool entries so active ones stay contiguous
+          const tmp = pipePool[i];
+          pipePool[i] = pipePool[last];
+          pipePool[last] = tmp;
+        }
+        pipeActiveCount--;
         continue;
       }
 
@@ -1443,9 +1551,9 @@
     drawCloudsBatched(clouds);
     ctx.globalAlpha = 1;
 
-    // Pipes
-    for (const p of pipes) {
-      drawPipe(p);
+    // Pipes (from pool)
+    for (let i = 0; i < pipeActiveCount; i++) {
+      drawPipe(pipePool[i]);
     }
 
     // Ground
@@ -1601,7 +1709,6 @@
   function drawSettingsBtn() {
     // Only show during play, paused, or dead — not on idle title screen
     if (state === 'idle') return;
-    const c = settingsBtnCenter();
     const s = SETTINGS_BTN.size;
     ctx.save();
 
@@ -1610,11 +1717,11 @@
     ctx.globalAlpha = baseAlpha;
 
     if (heartImg) {
-      ctx.drawImage(heartImg, c.x - s / 2, c.y - s / 2, s, s);
+      ctx.drawImage(heartImg, _settingsBtnX - s / 2, _settingsBtnY - s / 2, s, s);
     } else {
       ctx.fillStyle = CC.violet;
       ctx.beginPath();
-      ctx.arc(c.x, c.y, s / 2, 0, Math.PI * 2);
+      ctx.arc(_settingsBtnX, _settingsBtnY, s / 2, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -1624,7 +1731,7 @@
       ctx.strokeStyle = CC.magenta;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(c.x, c.y, s / 2 + 4, 0, Math.PI * 2);
+      ctx.arc(_settingsBtnX, _settingsBtnY, s / 2 + 4, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -1638,13 +1745,13 @@
     ctx.save();
 
     // Semi-transparent scrim behind the card
-    ctx.fillStyle = 'rgba(9, 9, 73, 0.3)';
+    ctx.fillStyle = RGBA.scrim30;
     ctx.fillRect(0, 0, CFG.width, CFG.height);
 
     // Card shadow (two offset translucent rects instead of shadowBlur)
-    ctx.fillStyle = 'rgba(0,0,0,0.08)';
+    ctx.fillStyle = RGBA.shadow08;
     roundRect(layout.x + 2, layout.y + 4, layout.w, layout.h, 12);
-    ctx.fillStyle = 'rgba(0,0,0,0.05)';
+    ctx.fillStyle = RGBA.shadow05;
     roundRect(layout.x + 1, layout.y + 2, layout.w, layout.h, 12);
     // Card background
     ctx.fillStyle = CC.white;
@@ -1697,7 +1804,7 @@
     ctx.save();
 
     // Dim overlay
-    ctx.fillStyle = 'rgba(9, 9, 73, 0.35)';
+    ctx.fillStyle = RGBA.scrim35;
     ctx.fillRect(0, 0, CFG.width, CFG.height);
 
     // Card
@@ -1706,9 +1813,9 @@
     const cx    = (CFG.width  - cardW) / 2;
     const cy    = (CFG.height - cardH) / 2 - 15;
     // Shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.09)';
+    ctx.fillStyle = RGBA.shadow09;
     roundRect(cx + 2, cy + 5, cardW, cardH, 16);
-    ctx.fillStyle = 'rgba(0,0,0,0.05)';
+    ctx.fillStyle = RGBA.shadow05;
     roundRect(cx + 1, cy + 2, cardW, cardH, 16);
     // Background
     ctx.fillStyle = CC.white;
@@ -1747,7 +1854,7 @@
     ctx.save();
 
     // Dim overlay
-    ctx.fillStyle = 'rgba(9, 9, 73, 0.45)';
+    ctx.fillStyle = RGBA.scrim45;
     ctx.fillRect(0, 0, CFG.width, CFG.height);
 
     // Game Over card
@@ -1756,9 +1863,9 @@
     const cx    = (CFG.width  - cardW) / 2;
     const cy    = (CFG.height - cardH) / 2 - 15;
     // Card shadow (two offset translucent rects instead of shadowBlur)
-    ctx.fillStyle = 'rgba(0,0,0,0.09)';
+    ctx.fillStyle = RGBA.shadow09;
     roundRect(cx + 2, cy + 5, cardW, cardH, 16);
-    ctx.fillStyle = 'rgba(0,0,0,0.05)';
+    ctx.fillStyle = RGBA.shadow05;
     roundRect(cx + 1, cy + 2, cardW, cardH, 16);
     ctx.fillStyle = CC.white;
     roundRect(cx, cy, cardW, cardH, 16);
