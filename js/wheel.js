@@ -113,20 +113,36 @@ const DOM = Object.freeze({
 });
 
 // ============================================================
-//  CANVAS SETUP (HiDPI)
+//  CANVAS SETUP (HiDPI + Responsive)
 // ============================================================
 
 const ctx = DOM.canvas.getContext('2d');
-const SIZE = TOKENS.wheelSize;
+const MAX_WHEEL = TOKENS.wheelSize; // 520 — design maximum
 const dpr = window.devicePixelRatio || 1;
 
-DOM.canvas.width = SIZE * dpr;
-DOM.canvas.height = SIZE * dpr;
-DOM.canvas.style.width = SIZE + 'px';
-DOM.canvas.style.height = SIZE + 'px';
-ctx.scale(dpr, dpr);
+/** Compute the best wheel size for the current viewport */
+function computeWheelSize() {
+  return Math.min(MAX_WHEEL, window.innerWidth * 0.88);
+}
 
-const HALF = SIZE / 2;
+let SIZE = computeWheelSize();
+let HALF = SIZE / 2;
+
+/** Apply SIZE to the canvas element (call after SIZE changes) */
+function applyCanvasSize() {
+  DOM.canvas.width  = SIZE * dpr;
+  DOM.canvas.height = SIZE * dpr;
+  DOM.canvas.style.width  = SIZE + 'px';
+  DOM.canvas.style.height = SIZE + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+/** Compute scale factor relative to the 520px design baseline */
+function wheelScale() {
+  return SIZE / MAX_WHEEL;
+}
+
+applyCanvasSize();
 
 // ============================================================
 //  STATE
@@ -163,8 +179,11 @@ function normalizeAngle(angle) {
 }
 
 // ============================================================
-//  DRAWING
+//  DRAWING (all geometry scaled by wheelScale())
 // ============================================================
+
+/** Scale a design-baseline value to the current wheel SIZE */
+function s(value) { return value * wheelScale(); }
 
 function drawWheel() {
   ctx.clearRect(0, 0, SIZE, SIZE);
@@ -187,7 +206,7 @@ function drawWheel() {
 function drawSlice(angle, color, picked) {
   ctx.beginPath();
   ctx.moveTo(HALF, HALF);
-  ctx.arc(HALF, HALF, HALF - TOKENS.wheelInset, angle, angle + slice);
+  ctx.arc(HALF, HALF, HALF - s(TOKENS.wheelInset), angle, angle + slice);
   ctx.closePath();
   ctx.fillStyle = picked ? hexToRgba(color, TOKENS.opacityDimmed) : color;
   ctx.fill();
@@ -199,25 +218,26 @@ function drawWinnerGlow(index, angle) {
   ctx.save();
   ctx.beginPath();
   ctx.moveTo(HALF, HALF);
-  ctx.arc(HALF, HALF, HALF - TOKENS.wheelInset, angle, angle + slice);
+  ctx.arc(HALF, HALF, HALF - s(TOKENS.wheelInset), angle, angle + slice);
   ctx.closePath();
   ctx.shadowColor = TOKENS.cyan;
-  ctx.shadowBlur = TOKENS.glowBaseBlur + Math.sin(glowPhase) * TOKENS.glowAmplitude;
+  ctx.shadowBlur = s(TOKENS.glowBaseBlur) + Math.sin(glowPhase) * s(TOKENS.glowAmplitude);
   ctx.fill();
   ctx.restore();
 }
 
 function drawSeparator(angle) {
-  const edge = HALF - TOKENS.wheelInset;
+  const edge = HALF - s(TOKENS.wheelInset);
   ctx.beginPath();
   ctx.moveTo(HALF, HALF);
   ctx.lineTo(HALF + edge * Math.cos(angle), HALF + edge * Math.sin(angle));
   ctx.strokeStyle = hexToRgba(TOKENS.white, TOKENS.opacitySeparator);
-  ctx.lineWidth = TOKENS.separatorWidth;
+  ctx.lineWidth = s(TOKENS.separatorWidth);
   ctx.stroke();
 }
 
 function drawSliceLabel(name, angle, picked) {
+  const fontSize = Math.max(10, Math.round(parseFloat(TOKENS.fontSize) * wheelScale()));
   ctx.save();
   ctx.translate(HALF, HALF);
   ctx.rotate(angle + slice / 2);
@@ -225,51 +245,51 @@ function drawSliceLabel(name, angle, picked) {
   ctx.fillStyle = picked
     ? hexToRgba(TOKENS.white, TOKENS.opacitySeparator)
     : TOKENS.white;
-  ctx.font = `${TOKENS.fontWeight} ${TOKENS.fontSize} ${TOKENS.fontFamily}`;
+  ctx.font = `${TOKENS.fontWeight} ${fontSize}px ${TOKENS.fontFamily}`;
   ctx.shadowColor = hexToRgba('#000000', TOKENS.opacityMuted);
-  ctx.shadowBlur = TOKENS.labelShadowBlur;
+  ctx.shadowBlur = s(TOKENS.labelShadowBlur);
   ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = TOKENS.labelShadowOffsetY;
-  ctx.fillText(name, HALF - TOKENS.textOffsetX, TOKENS.textOffsetY);
+  ctx.shadowOffsetY = s(TOKENS.labelShadowOffsetY);
+  ctx.fillText(name, HALF - s(TOKENS.textOffsetX), s(TOKENS.textOffsetY));
   ctx.restore();
 }
 
 function drawCenterCircle() {
   const grad = ctx.createRadialGradient(
     HALF, HALF, 0,
-    HALF, HALF, TOKENS.centerRadius + TOKENS.centerGradientPad
+    HALF, HALF, s(TOKENS.centerRadius) + s(TOKENS.centerGradientPad)
   );
   grad.addColorStop(0, TOKENS.white);
   grad.addColorStop(0.6, TOKENS.navy);
   grad.addColorStop(1, TOKENS.navy);
   ctx.beginPath();
-  ctx.arc(HALF, HALF, TOKENS.centerRadius, 0, TWO_PI);
+  ctx.arc(HALF, HALF, s(TOKENS.centerRadius), 0, TWO_PI);
   ctx.fillStyle = grad;
   ctx.fill();
 
   // White ring
   ctx.beginPath();
-  ctx.arc(HALF, HALF, TOKENS.centerRing, 0, TWO_PI);
+  ctx.arc(HALF, HALF, s(TOKENS.centerRing), 0, TWO_PI);
   ctx.strokeStyle = TOKENS.white;
-  ctx.lineWidth = TOKENS.ringWidth;
+  ctx.lineWidth = s(TOKENS.ringWidth);
   ctx.stroke();
 
   // Cyan dot
   ctx.beginPath();
-  ctx.arc(HALF, HALF, TOKENS.centerDot, 0, TWO_PI);
+  ctx.arc(HALF, HALF, s(TOKENS.centerDot), 0, TWO_PI);
   ctx.fillStyle = TOKENS.cyan;
   ctx.fill();
 }
 
 function drawPointer() {
-  const hw = TOKENS.pointerHalfW;
-  const top = TOKENS.pointerTop;
-  const tip = TOKENS.pointerTip;
+  const hw  = s(TOKENS.pointerHalfW);
+  const top = s(TOKENS.pointerTop);
+  const tip = s(TOKENS.pointerTip);
 
   ctx.save();
   ctx.shadowColor = hexToRgba(TOKENS.navy, TOKENS.pointerShadowOpacity);
-  ctx.shadowBlur = TOKENS.pointerShadowBlur;
-  ctx.shadowOffsetY = TOKENS.pointerShadowOffset;
+  ctx.shadowBlur = s(TOKENS.pointerShadowBlur);
+  ctx.shadowOffsetY = s(TOKENS.pointerShadowOffset);
 
   ctx.beginPath();
   ctx.moveTo(HALF - hw, top);
@@ -284,15 +304,15 @@ function drawPointer() {
   ctx.fill();
 
   ctx.strokeStyle = TOKENS.white;
-  ctx.lineWidth = TOKENS.pointerStrokeWidth;
+  ctx.lineWidth = s(TOKENS.pointerStrokeWidth);
   ctx.stroke();
   ctx.restore();
 }
 
 function flashPointer() {
-  const hw = TOKENS.pointerHalfW;
-  const top = TOKENS.pointerTop;
-  const tip = TOKENS.pointerTip;
+  const hw  = s(TOKENS.pointerHalfW);
+  const top = s(TOKENS.pointerTop);
+  const tip = s(TOKENS.pointerTip);
 
   ctx.save();
   ctx.globalAlpha = TOKENS.opacityFlash;
@@ -424,6 +444,10 @@ function showWinner(name) {
   DOM.winnerName.textContent = name;
   DOM.overlay.classList.remove('hidden');
 
+  // Announce to screen readers via the aria-live region
+  const liveRegion = document.getElementById('sr-announcement');
+  if (liveRegion) liveRegion.textContent = name + ' has been selected!';
+
   // Re-trigger animation
   DOM.winnerCard.classList.remove('animate-scale-in');
   void DOM.winnerCard.offsetWidth;
@@ -474,9 +498,9 @@ function renderHistory() {
   DOM.historyTbody.innerHTML = spinHistory.map((entry, i) => {
     const parity = i % 2 === 0 ? 'history-row--even' : 'history-row--odd';
     return `<tr class="history-row ${parity}">
-      <td class="py-2.5 px-3 text-sm font-bold text-navy-40">${i + 1}</td>
-      <td class="py-2.5 px-3 text-sm font-semibold text-sn-navy">${entry.name}</td>
-      <td class="py-2.5 px-3 text-sm text-navy-50 text-right">${entry.time}</td>
+      <td class="py-2 px-2 md:py-2.5 md:px-3 text-xs md:text-sm font-bold text-navy-40">${i + 1}</td>
+      <td class="py-2 px-2 md:py-2.5 md:px-3 text-xs md:text-sm font-semibold text-sn-navy">${entry.name}</td>
+      <td class="py-2 px-2 md:py-2.5 md:px-3 text-xs md:text-sm text-navy-50 text-right">${entry.time}</td>
     </tr>`;
   }).join('');
 }
@@ -510,7 +534,7 @@ function hideAllPicked() {
   DOM.spinBtn.disabled = false;
 }
 
-const TAB_BASE = 'tab-btn px-6 py-2 text-sm font-bold rounded-pill transition-all duration-200';
+const TAB_BASE = 'tab-btn px-4 py-1.5 text-xs md:px-6 md:py-2 md:text-sm font-bold rounded-pill transition-all duration-200';
 
 function switchTab(tab) {
   const isWheel = tab === 'wheel';
@@ -519,7 +543,28 @@ function switchTab(tab) {
   DOM.sectionHistory.classList.toggle('hidden', isWheel);
   DOM.tabWheel.className  = `${TAB_BASE} ${isWheel ? 'tab-btn--active' : 'tab-btn--inactive'}`;
   DOM.tabHistory.className = `${TAB_BASE} ${isWheel ? 'tab-btn--inactive' : 'tab-btn--active'}`;
+
+  // ARIA: update tab selection state
+  DOM.tabWheel.setAttribute('aria-selected', isWheel ? 'true' : 'false');
+  DOM.tabHistory.setAttribute('aria-selected', isWheel ? 'false' : 'true');
 }
+
+// ============================================================
+//  RESPONSIVE RESIZE
+// ============================================================
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    const newSize = computeWheelSize();
+    if (Math.abs(newSize - SIZE) < 2) return; // no meaningful change
+    SIZE = newSize;
+    HALF = SIZE / 2;
+    applyCanvasSize();
+    if (names.length) drawWheel();
+  }, 150);
+});
 
 // ============================================================
 //  INIT

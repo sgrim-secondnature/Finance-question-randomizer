@@ -93,11 +93,33 @@ body {
   font-family: var(--font-family);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden; /* prevent horizontal scroll on mobile */
 }
 
 /* Heading font utility (Poppins — same as secondnature.com headings) */
 .font-heading {
   font-family: var(--font-family-heading);
+}
+
+/* --- Accessibility: screen-reader only ---------------------- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* --- Responsive Design Tokens (mobile) ---------------------- */
+@media (max-width: 480px) {
+  :root {
+    --font-size-label: 11px;
+    --wheel-text-offset-x: 16;
+  }
 }
 
 /* --- Canvas ------------------------------------------------ */
@@ -226,6 +248,42 @@ canvas {
   text-transform: uppercase;
 }
 
+/* Clickable difficulty badge in modal header */
+.flappy-header-diff {
+  margin-left: auto;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--sn-magenta);
+  font-family: var(--font-family-heading);
+  font-weight: 700;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.175rem 0.55rem;
+  border-radius: 2rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  line-height: 1.3;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.flappy-header-diff:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--sn-white);
+}
+
+/* Best score label in modal header */
+.flappy-header-best {
+  font-size: 0.6rem;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .flappy-modal__close {
   margin-left: 0.5rem;
   flex-shrink: 0;
@@ -256,6 +314,7 @@ canvas {
   display: block;
   width: 100%;
   height: auto;
+  will-change: transform;
 }
 
 .flappy-modal__footer {
@@ -307,6 +366,37 @@ canvas {
   font-size: 0.8rem;
   color: rgba(255, 255, 255, 0.7);
   margin: 0 0 0.125rem;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  justify-content: center;
+}
+
+/* Keyboard-cap badges for controls hint */
+.flappy-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-family-heading);
+  font-weight: 700;
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  color: var(--sn-navy);
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15),
+              inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+  min-width: 1.8rem;
+  text-align: center;
+  line-height: 1.3;
+}
+
+.flappy-hint-label {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.7rem;
+  margin-left: 0.125rem;
 }
 
 .flappy-title-card__best {
@@ -357,4 +447,30 @@ canvas {
 @keyframes flappySlideIn {
   0%   { opacity: 0; transform: scale(0.6) translateY(40px); }
   100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* --- Flappy Modal: mobile adjustments ----------------------- */
+@media (max-width: 480px) {
+  .flappy-modal {
+    max-width: calc(100vw - 2rem);
+    border-radius: 0.75rem;
+  }
+
+  .flappy-modal__header {
+    font-size: 0.75rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .flappy-title-card__title {
+    font-size: 1.35rem;
+  }
+
+  .flappy-title-card__hint {
+    font-size: 0.7rem;
+  }
+
+  .flappy-title-card__play {
+    font-size: 0.8rem;
+    padding: 0.5rem 2rem;
+  }
 }

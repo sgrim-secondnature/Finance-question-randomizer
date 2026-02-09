@@ -24,21 +24,56 @@
   const FONT_HEADING = () => css('--font-family-heading') || '"Poppins", sans-serif';
 
   /* --- Game constants ---------------------------------------- */
+  // Logical (design) dimensions — game physics stay constant.
+  // The canvas CSS size scales to fit the container.
+  const BASE_W = 380;
+  const BASE_H = 520;
+
   const CFG = {
-    width:       380,
-    height:      520,
-    gravity:     0.38,
-    flapForce:  -6.2,
+    width:       BASE_W,
+    height:      BASE_H,
+    // Physics defaults (overridden by difficulty presets)
+    gravity:     0.28,
+    flapForce:  -5.0,
+    terminalVel: 5.5,
     pipeWidth:   52,
-    pipeGap:     145,
-    pipeSpeed:   2.4,
-    pipeSpawn:   1600,    // ms between pipes
+    pipeGap:     162,
+    pipeSpeed:   2.2,
+    pipeSpawn:   1700,
+    hitboxPad:   5,
+    // Fixed layout
     groundH:     50,
     birdSize:    28,
     birdX:       70,
     cloudCount:  4,
-    resetDelay:  600,     // ms before tap-to-restart works
+    resetDelay:  600,
   };
+
+  /* --- Difficulty presets ------------------------------------ */
+  const DIFFICULTY = {
+    easy:   { gravity: 0.22, flapForce: -4.6, terminalVel: 4.8, pipeGap: 180, pipeSpeed: 1.9, pipeSpawn: 1900, hitboxPad: 7 },
+    normal: { gravity: 0.28, flapForce: -5.0, terminalVel: 5.5, pipeGap: 162, pipeSpeed: 2.2, pipeSpawn: 1700, hitboxPad: 5 },
+    hard:   { gravity: 0.38, flapForce: -6.0, terminalVel: 7.0, pipeGap: 138, pipeSpeed: 2.6, pipeSpawn: 1450, hitboxPad: 2 },
+  };
+  const DIFF_KEYS = ['easy', 'normal', 'hard'];
+  const DIFF_LABELS = { easy: 'Easy', normal: 'Normal', hard: 'Hard' };
+  let currentDifficulty = localStorage.getItem('sn-flappy-diff') || 'normal';
+
+  function applyDifficulty(key) {
+    const d = DIFFICULTY[key];
+    if (!d) return;
+    currentDifficulty = key;
+    CFG.gravity     = d.gravity;
+    CFG.flapForce   = d.flapForce;
+    CFG.terminalVel = d.terminalVel;
+    CFG.pipeGap     = d.pipeGap;
+    CFG.pipeSpeed   = d.pipeSpeed;
+    CFG.pipeSpawn   = d.pipeSpawn;
+    CFG.hitboxPad   = d.hitboxPad;
+    localStorage.setItem('sn-flappy-diff', key);
+    // Update header badge in real-time
+    updateHeader();
+  }
 
   /* --- Parallax Background System ----------------------------- */
   // All Second Nature themed background artifacts
@@ -70,34 +105,21 @@
   };
 
   /* --- Banner / plane text pools ----------------------------- */
-  const BANNER_TEXTS = [
-    'Triple Win!',
-    'SNKO 2026',
-    'NARPM 7x Affiliate',
-    'Resident Benefits',
-    'Credit Building',
-    'Maestro',
-    'Phoenix',
-    'New Orleans',
-    'Montreal',
-    'Air Filters',
-    '64pt Credit Boost!',
-    'RBP',
-    'Purple Heart',
-    'Pirate Ship!',
-    'Grow the Pie',
-    'Move-In Concierge',
-    'Identity Protection',
-    'Resident Rewards',
-    '2M+ Experiences',
-    '2500+ PM Companies',
-    'Moment Maker',
-    'Extreme Ownership',
-    'Resident Onboarding',
-    'Second Nature',
-    'Dallas',
-    'Nashville',
+  // Loaded from data/banners.json at game start; inline fallback if fetch fails.
+  let BANNER_TEXTS = [
+    'Triple Win!', 'SNKO 2026', 'Second Nature', 'Resident Benefits',
+    'Credit Building', 'Grow the Pie', 'Moment Maker', 'Extreme Ownership',
   ];
+
+  async function loadBannerTexts() {
+    try {
+      const resp = await fetch('data/banners.json');
+      if (resp.ok) {
+        const json = await resp.json();
+        if (Array.isArray(json) && json.length > 0) BANNER_TEXTS = json;
+      }
+    } catch (_) { /* keep fallback */ }
+  }
 
   /* SNKO skyline city identifiers — each has a distinctive silhouette */
   const SKYLINE_CITIES = ['phoenix', 'neworleans', 'montreal', 'dallas', 'nashville'];
@@ -105,13 +127,82 @@
   /* --- Background state -------------------------------------- */
   let bgLayers = null; // initialised in initBackground()
 
+  /* --- Performance: cached values (populated once in startGame) --- */
+  let CC = null;   // cached colors  – plain string map, avoids getComputedStyle per frame
+  let CF = '';     // cached font    – heading font string
+  let skyGrad    = null;  // cached sky gradient
+  let accentGrad = null;  // cached ground-accent gradient
+  let pipeGrad   = null;  // cached pipe body gradient (translated per pipe)
+
+  /** Return max of fn(item) across arr without allocating a temporary array. */
+  function maxOf(arr, fn) {
+    let m = -Infinity;
+    for (let i = 0, len = arr.length; i < len; i++) {
+      const v = fn(arr[i]);
+      if (v > m) m = v;
+    }
+    return m;
+  }
+
   /* --- State ------------------------------------------------- */
   let heart, overlay;
   let gameOpen   = false;
   let canvas, ctx, rafId;
-  let bird, pipes, clouds, score, bestScore, state; // 'idle' | 'play' | 'dead'
+  let bird, pipes, clouds, score, state; // 'idle' | 'play' | 'dead' | 'paused'
   let lastPipeTime, deadTime, frameTime;
   let globalTime = 0; // always-incrementing time for ambient animations
+  let pausedTime = 0; // timestamp when we paused (to fix pipe-spawn drift)
+  let prevStateBeforePause = null; // state before pause (so we resume correctly)
+
+  /* --- Per-difficulty best scores ----------------------------- */
+  // Stored as JSON: { easy: 0, normal: 0, hard: 0 }
+  const BEST_STORAGE_KEY = 'sn-flappy-best-v2';
+  let bestScores = { easy: 0, normal: 0, hard: 0 };
+
+  function loadBestScores() {
+    try {
+      const raw = localStorage.getItem(BEST_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        for (const k of DIFF_KEYS) {
+          if (typeof parsed[k] === 'number' && parsed[k] > 0) bestScores[k] = parsed[k];
+        }
+      }
+      // Migrate old single-score key if v2 doesn't exist yet
+      if (!raw) {
+        const old = parseInt(localStorage.getItem('sn-flappy-best') || '0', 10);
+        if (old > 0) {
+          bestScores.normal = old;
+          saveBestScores();
+          localStorage.removeItem('sn-flappy-best');
+        }
+      }
+    } catch (_) { /* keep defaults */ }
+  }
+
+  function saveBestScores() {
+    localStorage.setItem(BEST_STORAGE_KEY, JSON.stringify(bestScores));
+  }
+
+  /** Shorthand: best score for the current difficulty */
+  function bestScore() {
+    return bestScores[currentDifficulty] || 0;
+  }
+
+  /* --- Settings heart button (top-right of canvas) ----------- */
+  const SETTINGS_BTN = {
+    size:  22,       // heart icon drawn at this size
+    pad:   10,       // padding from canvas edges
+    hoverR: 18,      // hit-test radius (generous for touch)
+  };
+  let settingsHover  = false;  // is the mouse over the settings heart?
+  let settingsOpen   = false;  // is the difficulty picker visible?
+  let mouseX = -1, mouseY = -1; // canvas-local mouse coords (for hover)
+
+  /* --- In-game controls hint (fades after a few seconds) ----- */
+  let hintStartTime = 0;       // set when gameplay begins
+  const HINT_DURATION = 3500;  // total visible time (ms)
+  const HINT_FADE     = 1200;  // fade-out portion at end (ms)
 
   /* --- Heart SVG for canvas drawing -------------------------- */
   const HEART_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
@@ -137,9 +228,16 @@
     overlay = $('#flappy-overlay');
     if (!heart || !overlay) return;
 
-    bestScore = parseInt(localStorage.getItem('sn-flappy-best') || '0', 10);
+    loadBestScores();
 
     heart.addEventListener('click', onHeartClick);
+    // Keyboard support for accessibility (role="button" + tabindex="0")
+    heart.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onHeartClick(e);
+      }
+    });
   }
 
   let animating = false; // guard against clicks during animations
@@ -230,7 +328,8 @@
             <path d="M16 1.88647C8.01418 1.88647 2 7.9574 2 15.9999C2 24.0425 8.01418 30.1134 16 30.1134C23.9858 30.1134 30 24.0425 30 15.9999C30 7.9574 23.9858 1.88647 16 1.88647ZM23.1773 16.851L16.5957 23.4326C16.2553 23.773 15.6879 23.773 15.3475 23.4326L8.9078 16.9929C7.33333 15.4184 7.06383 12.8794 8.42553 11.1205C10.0709 8.99286 13.1489 8.85101 14.9929 10.695L15.9716 11.6737L16.8511 10.7943C18.539 9.09215 21.3333 8.92194 23.078 10.5673C24.8794 12.2695 24.922 15.1063 23.1773 16.851Z" fill="${COLORS.magenta()}"/>
           </svg>
           <span>Flappy Nature</span>
-          <span id="flappy-best" style="margin-left:auto;font-size:11px;opacity:0;font-weight:600;transition:opacity 0.3s ease;"></span>
+          <button id="flappy-diff-btn" class="flappy-header-diff" title="Change difficulty"></button>
+          <span id="flappy-best" class="flappy-header-best"></span>
           <button class="flappy-modal__close" aria-label="Close game" title="Close">&times;</button>
         </div>
         <div class="flappy-modal__body">
@@ -243,8 +342,12 @@
               </svg>
             </div>
             <h2 class="flappy-title-card__title">Flappy Nature</h2>
-            <p class="flappy-title-card__hint">Click, Space, or Enter to flap</p>
-            ${bestScore > 0 ? `<p class="flappy-title-card__best">Best: ${bestScore}</p>` : ''}
+            <p class="flappy-title-card__hint">
+              <kbd class="flappy-kbd">Space</kbd>
+              <kbd class="flappy-kbd">Click</kbd>
+              <span class="flappy-hint-label">to flap</span>
+            </p>
+            ${bestScore() > 0 ? `<p class="flappy-title-card__best">Best: ${bestScore()}</p>` : ''}
             <button id="flappy-play-btn" class="flappy-title-card__play">Play</button>
           </div>
         </div>
@@ -266,6 +369,9 @@
     // Wire play button
     document.getElementById('flappy-play-btn').addEventListener('click', dismissTitleCard);
 
+    // Wire header difficulty button — opens the canvas picker
+    document.getElementById('flappy-diff-btn').addEventListener('click', onHeaderDiffClick);
+
     // Focus the play button for accessibility
     document.getElementById('flappy-play-btn').focus();
 
@@ -277,18 +383,34 @@
     if (!card) return;
     card.classList.add('flappy-title-card--out');
     setTimeout(() => { card.remove(); }, 350);
-    showHeaderBest();
+    updateHeader();
     // Start actual gameplay
     flap();
   }
 
-  function showHeaderBest() {
-    const el = document.getElementById('flappy-best');
-    if (!el) return;
-    if (bestScore > 0) {
-      el.textContent = 'Best: ' + bestScore;
+  /** Update both header elements (difficulty badge + best score) to reflect current state */
+  function updateHeader() {
+    const diffBtn = document.getElementById('flappy-diff-btn');
+    const bestEl  = document.getElementById('flappy-best');
+    const best    = bestScore();
+    if (diffBtn) {
+      diffBtn.textContent = DIFF_LABELS[currentDifficulty] || 'Normal';
+      diffBtn.style.opacity = '1';
     }
-    el.style.opacity = '0.7';
+    if (bestEl) {
+      bestEl.textContent = best > 0 ? 'Best: ' + best : '';
+      bestEl.style.opacity = best > 0 ? '0.7' : '0';
+    }
+  }
+
+  /** Clicking the header difficulty badge toggles the canvas picker (always pauses) */
+  function onHeaderDiffClick(e) {
+    e.stopPropagation(); // don't bubble to backdrop close
+    if (settingsOpen) {
+      closeDiffPicker();
+    } else {
+      openDiffPicker();
+    }
   }
 
   function closeGame() {
@@ -308,7 +430,11 @@
   }
 
   function onKeyDown(e) {
-    if (e.key === 'Escape') { closeGame(); return; }
+    if (e.key === 'Escape') {
+      if (settingsOpen) { closeDiffPicker(); return; }
+      closeGame();
+      return;
+    }
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
       flap();
@@ -321,23 +447,64 @@
     if (!canvas) return;
     ctx = canvas.getContext('2d');
 
-    // HiDPI
+    // Load banner texts from JSON (non-blocking — fallback is already in place)
+    loadBannerTexts();
+
+    // --- Cache all CSS design tokens ONCE (avoids getComputedStyle per frame) ---
+    CC = {
+      navy:      COLORS.navy(),
+      violet:    COLORS.violet(),
+      cyan:      COLORS.cyan(),
+      magenta:   COLORS.magenta(),
+      light:     COLORS.light(),
+      white:     COLORS.white(),
+      midviolet: COLORS.midviolet(),
+    };
+    CF = FONT_HEADING();
+
+    // Responsive: compute display size to fit within the viewport
+    const maxCssW = Math.min(BASE_W, window.innerWidth - 48);
+    const cssScale = maxCssW / BASE_W;
+    const cssW = Math.round(BASE_W * cssScale);
+    const cssH = Math.round(BASE_H * cssScale);
+
+    // HiDPI: backing store uses logical game dimensions * dpr
     const dpr = window.devicePixelRatio || 1;
-    canvas.width  = CFG.width  * dpr;
-    canvas.height = CFG.height * dpr;
-    canvas.style.width  = CFG.width  + 'px';
-    canvas.style.height = CFG.height + 'px';
+    canvas.width  = BASE_W * dpr;
+    canvas.height = BASE_H * dpr;
+    // CSS display size scales to fit container
+    canvas.style.width  = cssW + 'px';
+    canvas.style.height = cssH + 'px';
     ctx.scale(dpr, dpr);
 
-    heartImg = await loadHeartImage(COLORS.violet());
+    // --- Build reusable gradients (coordinates are constant) ---
+    skyGrad = ctx.createLinearGradient(0, 0, 0, CFG.height - CFG.groundH);
+    skyGrad.addColorStop(0, CC.light);
+    skyGrad.addColorStop(0.6, CC.white);
+    skyGrad.addColorStop(1, '#F5F0F8');
+
+    accentGrad = ctx.createLinearGradient(0, 0, CFG.width, 0);
+    accentGrad.addColorStop(0, CC.magenta);
+    accentGrad.addColorStop(1, CC.cyan);
+
+    // Pipe gradient at origin — translated per-pipe via ctx.translate
+    pipeGrad = ctx.createLinearGradient(0, 0, CFG.pipeWidth, 0);
+    pipeGrad.addColorStop(0, CC.navy);
+    pipeGrad.addColorStop(1, CC.midviolet);
+
+    heartImg = await loadHeartImage(CC.violet);
     initClouds();
     initBackground();
+    applyDifficulty(currentDifficulty); // load saved (or default) difficulty
     resetGameState();
 
-    canvas.addEventListener('click', flap);
-    canvas.addEventListener('touchstart', (e) => { e.preventDefault(); flap(); }, { passive: false });
+    canvas.addEventListener('click', onCanvasClick);
+    canvas.addEventListener('touchstart', onCanvasTouchStart, { passive: false });
+    canvas.addEventListener('mousemove', onCanvasMouseMove);
+    canvas.addEventListener('mouseleave', () => { mouseX = mouseY = -1; settingsHover = false; });
 
     frameTime = performance.now();
+    accumulator = 0;   // reset fixed-timestep accumulator
     loop();
   }
 
@@ -345,8 +512,11 @@
     if (rafId) cancelAnimationFrame(rafId);
     rafId = null;
     if (canvas) {
-      canvas.removeEventListener('click', flap);
+      canvas.removeEventListener('click', onCanvasClick);
+      canvas.removeEventListener('mousemove', onCanvasMouseMove);
     }
+    settingsOpen = false;
+    prevStateBeforePause = null;
   }
 
   function resetGameState() {
@@ -359,6 +529,7 @@
   }
 
   function flap() {
+    if (state === 'paused') return; // don't flap while picker is open
     if (state === 'idle') {
       // Dismiss the HTML title card if still present
       const card = document.getElementById('flappy-title-card');
@@ -366,10 +537,11 @@
         card.classList.add('flappy-title-card--out');
         setTimeout(() => { card.remove(); }, 350);
       }
-      showHeaderBest();
+      updateHeader();
       state = 'play';
       bird.vy = CFG.flapForce;
       lastPipeTime = performance.now();
+      hintStartTime = performance.now();
     } else if (state === 'play') {
       bird.vy = CFG.flapForce;
     } else if (state === 'dead') {
@@ -380,6 +552,165 @@
         lastPipeTime = performance.now();
       }
     }
+  }
+
+  /* --- Canvas interaction routing ----------------------------- */
+  // Convert a DOM mouse/touch event to canvas-local coordinates
+  function canvasCoords(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = CFG.width  / rect.width;
+    const scaleY = CFG.height / rect.height;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top)  * scaleY,
+    };
+  }
+
+  // Settings heart center (top-right)
+  function settingsBtnCenter() {
+    return {
+      x: CFG.width  - SETTINGS_BTN.pad - SETTINGS_BTN.size / 2,
+      y: SETTINGS_BTN.pad + SETTINGS_BTN.size / 2,
+    };
+  }
+
+  function isInsideSettingsBtn(cx, cy) {
+    const c = settingsBtnCenter();
+    const dx = cx - c.x, dy = cy - c.y;
+    return dx * dx + dy * dy <= SETTINGS_BTN.hoverR * SETTINGS_BTN.hoverR;
+  }
+
+  // Difficulty picker button hit-test — returns the key ('easy'|'normal'|'hard') or null
+  function hitTestDiffPicker(cx, cy) {
+    if (!settingsOpen) return null;
+    const card = diffPickerLayout();
+    for (let i = 0; i < DIFF_KEYS.length; i++) {
+      const btn = card.buttons[i];
+      if (cx >= btn.x && cx <= btn.x + btn.w && cy >= btn.y && cy <= btn.y + btn.h) {
+        return DIFF_KEYS[i];
+      }
+    }
+    return null;
+  }
+
+  // Layout for the difficulty picker card (centered, just below the settings heart)
+  function diffPickerLayout() {
+    const cardW = 150, cardH = 130, btnH = 28, btnGap = 6, btnPadX = 14, topPad = 32;
+    const sc = settingsBtnCenter();
+    const cx = Math.min(sc.x - cardW / 2, CFG.width - cardW - 6);
+    const cy = sc.y + SETTINGS_BTN.size / 2 + 8;
+    const buttons = [];
+    for (let i = 0; i < DIFF_KEYS.length; i++) {
+      buttons.push({
+        x: cx + btnPadX,
+        y: cy + topPad + i * (btnH + btnGap),
+        w: cardW - btnPadX * 2,
+        h: btnH,
+        key: DIFF_KEYS[i],
+      });
+    }
+    return { x: cx, y: cy, w: cardW, h: cardH, buttons };
+  }
+
+  function onCanvasClick(e) {
+    const p = canvasCoords(e);
+
+    // If difficulty picker is open, check button hits first
+    if (settingsOpen) {
+      const key = hitTestDiffPicker(p.x, p.y);
+      if (key) {
+        changeDifficulty(key);
+        return;
+      }
+      // Clicking outside the picker closes it and resumes
+      closeDiffPicker();
+      return;
+    }
+
+    // Settings heart click — toggle pause + picker
+    if (isInsideSettingsBtn(p.x, p.y) && state !== 'idle') {
+      openDiffPicker();
+      return;
+    }
+
+    // Normal flap
+    flap();
+  }
+
+  function onCanvasTouchStart(e) {
+    e.preventDefault();
+    const p = canvasCoords(e);
+
+    if (settingsOpen) {
+      const key = hitTestDiffPicker(p.x, p.y);
+      if (key) {
+        changeDifficulty(key);
+        return;
+      }
+      closeDiffPicker();
+      return;
+    }
+
+    if (isInsideSettingsBtn(p.x, p.y) && state !== 'idle') {
+      openDiffPicker();
+      return;
+    }
+
+    flap();
+  }
+
+  function onCanvasMouseMove(e) {
+    const p = canvasCoords(e);
+    mouseX = p.x;
+    mouseY = p.y;
+    settingsHover = isInsideSettingsBtn(p.x, p.y);
+    // Update cursor style
+    if (canvas) {
+      const overPicker = settingsOpen && hitTestDiffPicker(p.x, p.y);
+      canvas.style.cursor = (settingsHover || overPicker) ? 'pointer' : 'default';
+    }
+  }
+
+  function openDiffPicker() {
+    // Remember the state we came from so we can resume correctly
+    if (state === 'play') {
+      prevStateBeforePause = 'play';
+      pausedTime = performance.now();
+      state = 'paused';
+    } else {
+      prevStateBeforePause = state; // 'idle', 'dead', etc.
+    }
+    settingsOpen = true;
+  }
+
+  function closeDiffPicker() {
+    settingsOpen = false;
+    if (state === 'paused' && prevStateBeforePause === 'play') {
+      // Resume play — adjust lastPipeTime so pipe spawn doesn't fire immediately
+      const elapsed = performance.now() - pausedTime;
+      lastPipeTime += elapsed;
+      frameTime = performance.now();
+      accumulator = 0;
+      state = 'play';
+    }
+    prevStateBeforePause = null;
+  }
+
+  /** Apply difficulty AND reset the game if changing mid-run */
+  function changeDifficulty(key) {
+    if (key === currentDifficulty) {
+      // Same difficulty — just close picker, resume
+      closeDiffPicker();
+      return;
+    }
+    // Different difficulty — apply and reset
+    applyDifficulty(key);
+    resetGameState();
+    // Close picker without resuming (we're now in 'idle')
+    settingsOpen = false;
+    prevStateBeforePause = null;
   }
 
   /* --- Clouds ----------------------------------------------- */
@@ -526,10 +857,26 @@
   }
 
   /* --- Plane spawner ----------------------------------------- */
+  // Altitude bands keep concurrent planes well-separated.
+  // The full range is 12–160 (much wider than the old 15–85).
+  const PLANE_ALT_MIN     = 12;
+  const PLANE_ALT_MAX     = 160;
+  const PLANE_ALT_SEP     = 45;   // minimum vertical gap between concurrent planes
+
   let nextPlaneTime = 0;
   function spawnPlane() {
     const bannerText = BANNER_TEXTS[Math.floor(Math.random() * BANNER_TEXTS.length)];
-    const y = 15 + Math.random() * 70;
+
+    // Pick a y that's at least PLANE_ALT_SEP away from every existing plane
+    let y, attempts = 0;
+    do {
+      y = PLANE_ALT_MIN + Math.random() * (PLANE_ALT_MAX - PLANE_ALT_MIN);
+      attempts++;
+    } while (
+      attempts < 20 &&
+      bgLayers.planes.some(p => Math.abs(p.y - y) < PLANE_ALT_SEP)
+    );
+
     const goingRight = Math.random() < 0.5;
     bgLayers.planes.push({
       x: goingRight ? -180 : CFG.width + 180,
@@ -583,7 +930,7 @@
     for (const seg of bgLayers.skyline) {
       seg.x -= seg.speed * CFG.pipeSpeed * dt;
       if (seg.x + seg.totalW < -20) {
-        seg.x = Math.max(...bgLayers.skyline.map(s => s.x + s.totalW)) + 5;
+        seg.x = maxOf(bgLayers.skyline, s => s.x + s.totalW) + 5;
         seg.city = SKYLINE_CITIES[Math.floor(Math.random() * SKYLINE_CITIES.length)];
       }
     }
@@ -592,7 +939,7 @@
     for (const b of bgLayers.buildings) {
       b.x -= b.speed * CFG.pipeSpeed * dt;
       if (b.x + b.w < -20) {
-        b.x = Math.max(...bgLayers.buildings.map(bb => bb.x + bb.w)) + 15 + Math.random() * 40;
+        b.x = maxOf(bgLayers.buildings, bb => bb.x + bb.w) + 15 + Math.random() * 40;
         b.h = 30 + Math.random() * 60;
         b.y = (CFG.height - CFG.groundH) - b.h;
         b.type = Math.random() < 0.4 ? 'house' : Math.random() < 0.65 ? 'apartment' : 'office';
@@ -604,7 +951,7 @@
     for (const t of bgLayers.trees) {
       t.x -= t.speed * CFG.pipeSpeed * dt;
       if (t.x + t.w < -20) {
-        t.x = Math.max(...bgLayers.trees.map(tt => tt.x + tt.w)) + 20 + Math.random() * 50;
+        t.x = maxOf(bgLayers.trees, tt => tt.x + tt.w) + 20 + Math.random() * 50;
         t.w = BG.treeMinW + Math.random() * (BG.treeMaxW - BG.treeMinW);
         t.h = t.w * (1.5 + Math.random());
         t.type = Math.random() < 0.3 ? 'pine' : 'round';
@@ -615,7 +962,7 @@
     for (const g of bgLayers.groundDeco) {
       g.x -= BG.nearSpeed * CFG.pipeSpeed * dt;
       if (g.x < -10) {
-        g.x = Math.max(...bgLayers.groundDeco.map(gg => gg.x)) + 25 + Math.random() * 35;
+        g.x = maxOf(bgLayers.groundDeco, gg => gg.x) + 25 + Math.random() * 35;
       }
     }
   }
@@ -623,10 +970,10 @@
   /* --- Draw all background layers (called before pipes/bird) -- */
   function drawBackground() {
     if (!bgLayers) return;
-    const navy = COLORS.navy();
-    const violet = COLORS.violet();
-    const cyan = COLORS.cyan();
-    const magenta = COLORS.magenta();
+    const navy = CC.navy;
+    const violet = CC.violet;
+    const cyan = CC.cyan;
+    const magenta = CC.magenta;
 
     ctx.save();
 
@@ -834,7 +1181,7 @@
     // Banner text — full opacity relative to the banner so it's legible
     ctx.globalAlpha = BG.bannerAlpha + 0.15; // text slightly more opaque than bg
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = `800 9px ${FONT_HEADING()}`;
+    ctx.font = `800 9px ${CF}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(p.bannerText, bLeft + bw / 2, bTop + bh / 2 + 0.5);
@@ -902,11 +1249,11 @@
     for (const g of bgLayers.groundDeco) {
       if (g.type === 'dash') {
         // Road-style dash
-        ctx.fillStyle = COLORS.cyan();
+        ctx.fillStyle = CC.cyan;
         ctx.fillRect(g.x, groundY + CFG.groundH / 2 - 1, 8, 2);
       } else {
         // Small dot/rivet
-        ctx.fillStyle = COLORS.magenta();
+        ctx.fillStyle = CC.magenta;
         ctx.beginPath();
         ctx.arc(g.x, groundY + CFG.groundH * 0.7, 1.5, 0, Math.PI * 2);
         ctx.fill();
@@ -915,13 +1262,31 @@
     ctx.restore();
   }
 
-  /* --- Main loop -------------------------------------------- */
-  function loop() {
-    const now = performance.now();
-    const dt  = Math.min((now - frameTime) / 16.667, 3); // normalize to ~60fps, cap
-    frameTime = now;
+  /* --- Main loop (fixed-timestep) ----------------------------- */
+  // Physics always tick at exactly 60 Hz regardless of monitor refresh rate.
+  // This prevents the game from speeding up on 120/144 Hz screens or
+  // slowing down when the browser throttles frames.
+  const FIXED_DT   = 1;               // 1 "tick" = 1/60 s of physics
+  const TICK_MS    = 1000 / 60;        // ≈16.667 ms per tick
+  const MAX_TICKS  = 4;                // safety cap — skip frames if way behind
+  let accumulator  = 0;
 
-    update(dt, now);
+  function loop() {
+    const now   = performance.now();
+    const delta = now - frameTime;     // real ms elapsed since last frame
+    frameTime   = now;
+
+    // Accumulate real time; consume it in fixed-size physics steps
+    accumulator += delta;
+    let ticks = 0;
+    while (accumulator >= TICK_MS && ticks < MAX_TICKS) {
+      update(FIXED_DT, now);
+      accumulator -= TICK_MS;
+      ticks++;
+    }
+    // If we hit the cap, throw away excess time so we don't spiral
+    if (ticks >= MAX_TICKS) accumulator = 0;
+
     draw();
 
     rafId = requestAnimationFrame(loop);
@@ -936,15 +1301,19 @@
       if (c.x + c.w < 0) { c.x = CFG.width + 10; c.y = 30 + Math.random() * (CFG.height * 0.35); }
     }
 
-    // Background layers: clouds & planes always move; ground stuff only during play
+    // Background layers: clouds & planes always move; ground stuff only during play (not paused)
     if (bgLayers) updateBackground(dt, now, state === 'play');
 
-    if (state === 'idle' || state === 'dead') return;
+    if (state === 'idle' || state === 'dead' || state === 'paused') return;
 
-    // Bird physics
+    // Bird physics — floaty feel with terminal velocity
     bird.vy  += CFG.gravity * dt;
+    // Cap downward speed so the bird never plummets like a stone
+    if (bird.vy > CFG.terminalVel) bird.vy = CFG.terminalVel;
     bird.y   += bird.vy * dt;
-    bird.rot  = Math.max(-25, Math.min(70, bird.vy * 4));
+    // Gentler rotation: tilt is based on velocity but with softer mapping
+    const targetRot = Math.max(-20, Math.min(55, bird.vy * 3.2));
+    bird.rot += (targetRot - bird.rot) * 0.12; // smooth interpolation
 
     // Ceiling clamp
     if (bird.y < 0) { bird.y = 0; bird.vy = 0; }
@@ -978,10 +1347,11 @@
         score++;
       }
 
-      // Collision
-      const bx = CFG.birdX;
-      const by = bird.y;
-      const bs = CFG.birdSize;
+      // Collision — with forgiveness padding so near-misses don't kill
+      const pad = CFG.hitboxPad;
+      const bx = CFG.birdX + pad;
+      const by = bird.y + pad;
+      const bs = CFG.birdSize - pad * 2;
       if (bx + bs > p.x && bx < p.x + CFG.pipeWidth) {
         if (by < p.topH || by + bs > p.topH + CFG.pipeGap) {
           die();
@@ -994,18 +1364,11 @@
   function die() {
     state    = 'dead';
     deadTime = performance.now();
-    if (score > bestScore) {
-      bestScore = score;
-      localStorage.setItem('sn-flappy-best', String(bestScore));
-      updateHeaderBest();
+    if (score > bestScores[currentDifficulty]) {
+      bestScores[currentDifficulty] = score;
+      saveBestScores();
+      updateHeader();
     }
-  }
-
-  function updateHeaderBest() {
-    const el = document.getElementById('flappy-best');
-    if (!el) return;
-    el.textContent = bestScore > 0 ? 'Best: ' + bestScore : '';
-    el.style.opacity = '0.7';
   }
 
   /* --- Draw ------------------------------------------------- */
@@ -1013,19 +1376,15 @@
     const W = CFG.width;
     const H = CFG.height;
 
-    // Sky gradient — slightly warmer to give the city a "golden hour" feel
-    const sky = ctx.createLinearGradient(0, 0, 0, H - CFG.groundH);
-    sky.addColorStop(0, COLORS.light());
-    sky.addColorStop(0.6, COLORS.white());
-    sky.addColorStop(1, '#F5F0F8'); // very faint lavender at horizon
-    ctx.fillStyle = sky;
+    // Sky gradient (cached — never changes)
+    ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, W, H);
 
     // === PARALLAX BACKGROUND (behind clouds & pipes) ===
     drawBackground();
 
     // Near clouds (original layer — slightly more opaque than BG clouds)
-    ctx.fillStyle = COLORS.cyan();
+    ctx.fillStyle = CC.cyan;
     ctx.globalAlpha = 0.12;
     for (const c of clouds) {
       drawCloud(c.x, c.y, c.w);
@@ -1038,17 +1397,14 @@
     }
 
     // Ground
-    ctx.fillStyle = COLORS.navy();
+    ctx.fillStyle = CC.navy;
     ctx.fillRect(0, H - CFG.groundH, W, CFG.groundH);
 
     // Ground decorations (road dashes, dots)
     drawGroundDeco();
 
-    // Ground accent line
-    const accent = ctx.createLinearGradient(0, 0, W, 0);
-    accent.addColorStop(0, COLORS.magenta());
-    accent.addColorStop(1, COLORS.cyan());
-    ctx.fillStyle = accent;
+    // Ground accent line (cached gradient)
+    ctx.fillStyle = accentGrad;
     ctx.fillRect(0, H - CFG.groundH, W, 3);
 
     // Bird — only visible during play & dead, not on the idle title screen
@@ -1057,8 +1413,15 @@
     // Score
     drawScore();
 
+    // Fading controls hint (first few seconds of play)
+    drawControlsHint();
+
+    // Settings heart button (always on top except behind popups)
+    drawSettingsBtn();
+
     // Overlays
     if (state === 'dead') drawDeadScreen();
+    if (state === 'paused' || settingsOpen) drawDiffPicker();
   }
 
   function drawCloud(x, y, w) {
@@ -1080,27 +1443,27 @@
     const gT = p.topH;
     const gB = p.topH + CFG.pipeGap;
 
-    // Top pipe
-    const tGrad = ctx.createLinearGradient(p.x, 0, p.x + W, 0);
-    tGrad.addColorStop(0, COLORS.navy());
-    tGrad.addColorStop(1, COLORS.midviolet());
-    ctx.fillStyle = tGrad;
-    roundRect(p.x, -4, W, gT + 4, r);
+    // Use cached pipe gradient — translate so origin aligns with pipe x
+    ctx.save();
+    ctx.translate(p.x, 0);
+
+    // Top pipe (gradient drawn at origin)
+    ctx.fillStyle = pipeGrad;
+    roundRect(0, -4, W, gT + 4, r);
 
     // Lip on top pipe
-    ctx.fillStyle = COLORS.violet();
-    roundRect(p.x - 4, gT - 20, W + 8, 20, r);
+    ctx.fillStyle = CC.violet;
+    roundRect(-4, gT - 20, W + 8, 20, r);
 
-    // Bottom pipe
-    const bGrad = ctx.createLinearGradient(p.x, 0, p.x + W, 0);
-    bGrad.addColorStop(0, COLORS.navy());
-    bGrad.addColorStop(1, COLORS.midviolet());
-    ctx.fillStyle = bGrad;
-    roundRect(p.x, gB, W, CFG.height - gB, r);
+    // Bottom pipe (same cached gradient)
+    ctx.fillStyle = pipeGrad;
+    roundRect(0, gB, W, CFG.height - gB, r);
 
     // Lip on bottom pipe
-    ctx.fillStyle = COLORS.violet();
-    roundRect(p.x - 4, gB, W + 8, 20, r);
+    ctx.fillStyle = CC.violet;
+    roundRect(-4, gB, W + 8, 20, r);
+
+    ctx.restore();
   }
 
   function roundRect(x, y, w, h, r) {
@@ -1127,7 +1490,7 @@
       ctx.drawImage(heartImg, -CFG.birdSize / 2, -CFG.birdSize / 2, CFG.birdSize, CFG.birdSize);
     } else {
       // Fallback circle
-      ctx.fillStyle = COLORS.violet();
+      ctx.fillStyle = CC.violet;
       ctx.beginPath();
       ctx.arc(0, 0, CFG.birdSize / 2, 0, Math.PI * 2);
       ctx.fill();
@@ -1139,14 +1502,134 @@
     if (state === 'idle') return;
 
     ctx.save();
-    ctx.font = `800 32px ${FONT_HEADING()}`;
+    ctx.font = `800 32px ${CF}`;
     ctx.textAlign = 'center';
-    ctx.fillStyle = COLORS.navy();
+    ctx.fillStyle = CC.navy;
     ctx.globalAlpha = 0.12;
     ctx.fillText(score, CFG.width / 2 + 2, 52);
     ctx.globalAlpha = 1;
-    ctx.fillStyle = COLORS.magenta();
+    ctx.fillStyle = CC.magenta;
     ctx.fillText(score, CFG.width / 2, 50);
+    ctx.restore();
+  }
+
+  /* --- In-game controls hint (fading) ------------------------- */
+  function drawControlsHint() {
+    if (state !== 'play' || hintStartTime === 0) return;
+    const elapsed = performance.now() - hintStartTime;
+    if (elapsed > HINT_DURATION) return; // fully gone
+
+    // Compute alpha: full opacity, then fade out at the end
+    let alpha = 0.55;
+    const fadeStart = HINT_DURATION - HINT_FADE;
+    if (elapsed > fadeStart) {
+      alpha *= 1 - (elapsed - fadeStart) / HINT_FADE;
+    }
+    if (alpha <= 0) return;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = 'center';
+
+    // "Space / Click to flap" — centered below the score
+    const cy = 78;
+    ctx.font = `600 11px ${CF}`;
+    ctx.fillStyle = CC.navy;
+    ctx.fillText('Space / Click to flap', CFG.width / 2, cy);
+
+    ctx.restore();
+  }
+
+  /* --- Settings heart button (top-right on canvas) ----------- */
+  function drawSettingsBtn() {
+    // Only show during play, paused, or dead — not on idle title screen
+    if (state === 'idle') return;
+    const c = settingsBtnCenter();
+    const s = SETTINGS_BTN.size;
+    ctx.save();
+
+    // Nearly invisible by default, glows on hover
+    const baseAlpha = settingsHover || settingsOpen ? 0.65 : 0.08;
+    ctx.globalAlpha = baseAlpha;
+
+    if (heartImg) {
+      ctx.drawImage(heartImg, c.x - s / 2, c.y - s / 2, s, s);
+    } else {
+      ctx.fillStyle = CC.violet;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, s / 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Subtle outline ring on hover
+    if (settingsHover || settingsOpen) {
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = CC.magenta;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, s / 2 + 4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  /* --- Difficulty picker popup (drawn on canvas) ------------- */
+  function drawDiffPicker() {
+    if (!settingsOpen) return;
+    const layout = diffPickerLayout();
+    ctx.save();
+
+    // Semi-transparent scrim behind the card
+    ctx.fillStyle = 'rgba(9, 9, 73, 0.3)';
+    ctx.fillRect(0, 0, CFG.width, CFG.height);
+
+    // Card background
+    ctx.fillStyle = CC.white;
+    ctx.shadowColor = 'rgba(0,0,0,0.18)';
+    ctx.shadowBlur  = 16;
+    roundRect(layout.x, layout.y, layout.w, layout.h, 12);
+    ctx.shadowBlur = 0;
+
+    // Title
+    ctx.font = `800 12px ${CF}`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = CC.navy;
+    ctx.fillText('Difficulty', layout.x + layout.w / 2, layout.y + 22);
+
+    // Buttons
+    for (let i = 0; i < layout.buttons.length; i++) {
+      const btn = layout.buttons[i];
+      const key = DIFF_KEYS[i];
+      const isActive = key === currentDifficulty;
+      const isHover  = mouseX >= btn.x && mouseX <= btn.x + btn.w &&
+                       mouseY >= btn.y && mouseY <= btn.y + btn.h;
+
+      // Button bg
+      if (isActive) {
+        ctx.fillStyle = CC.violet;
+      } else if (isHover) {
+        ctx.fillStyle = '#F0E8FA';
+      } else {
+        ctx.fillStyle = CC.light;
+      }
+      roundRect(btn.x, btn.y, btn.w, btn.h, 6);
+
+      // Button label (left-aligned) + best score (right-aligned)
+      const bst = bestScores[key] || 0;
+      ctx.font = `700 11px ${CF}`;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = isActive ? CC.white : CC.navy;
+      ctx.fillText(DIFF_LABELS[key], btn.x + 10, btn.y + btn.h / 2 + 4);
+      if (bst > 0) {
+        ctx.font = `600 9px ${CF}`;
+        ctx.textAlign = 'right';
+        ctx.globalAlpha = isActive ? 0.75 : 0.45;
+        ctx.fillText('Best: ' + bst, btn.x + btn.w - 10, btn.y + btn.h / 2 + 3);
+        ctx.globalAlpha = 1;
+      }
+    }
+
     ctx.restore();
   }
 
@@ -1162,28 +1645,28 @@
     const cardH = 150;
     const cx    = (CFG.width  - cardW) / 2;
     const cy    = (CFG.height - cardH) / 2 - 15;
-    ctx.fillStyle = COLORS.white();
+    ctx.fillStyle = CC.white;
     ctx.shadowColor = 'rgba(0,0,0,0.2)';
     ctx.shadowBlur  = 20;
     roundRect(cx, cy, cardW, cardH, 16);
     ctx.shadowBlur = 0;
 
-    ctx.font = `800 20px ${FONT_HEADING()}`;
+    ctx.font = `800 20px ${CF}`;
     ctx.textAlign = 'center';
-    ctx.fillStyle = COLORS.navy();
+    ctx.fillStyle = CC.navy;
     ctx.fillText('Game Over', CFG.width / 2, cy + 38);
 
-    ctx.font = `700 14px ${FONT_HEADING()}`;
-    ctx.fillStyle = COLORS.violet();
+    ctx.font = `700 14px ${CF}`;
+    ctx.fillStyle = CC.violet;
     ctx.fillText(`Score: ${score}`, CFG.width / 2, cy + 68);
 
-    ctx.fillStyle = COLORS.magenta();
-    ctx.fillText(`Best: ${bestScore}`, CFG.width / 2, cy + 90);
+    ctx.fillStyle = CC.magenta;
+    ctx.fillText(`Best: ${bestScore()}`, CFG.width / 2, cy + 90);
 
-    ctx.font = `600 12px ${FONT_HEADING()}`;
-    ctx.fillStyle = COLORS.navy();
+    ctx.font = `600 12px ${CF}`;
+    ctx.fillStyle = CC.navy;
     ctx.globalAlpha = 0.5;
-    ctx.fillText('Tap to try again', CFG.width / 2, cy + 128);
+    ctx.fillText('Space / Click to retry', CFG.width / 2, cy + 128);
     ctx.globalAlpha = 1;
 
     ctx.restore();

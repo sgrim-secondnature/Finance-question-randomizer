@@ -23,79 +23,93 @@
   <script src="js/tailwind.config.js"></script>
 </head>
 
-<body class="min-h-screen bg-gradient-to-br from-sn-light to-white flex flex-col items-center animate-fade-in">
+<body class="min-h-screen bg-gradient-to-br from-sn-light to-white flex flex-col items-center animate-fade-in overflow-x-hidden">
+
+  <!-- Skip to content (accessibility) -->
+  <a href="#section-wheel" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:bg-sn-navy focus:text-white focus:rounded-pill focus:font-bold focus:text-sm">
+    Skip to main content
+  </a>
+
+  <!-- Screen-reader live region for spin announcements -->
+  <div id="sr-announcement" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Header -->
-  <header class="w-full bg-sn-navy py-5 px-6 flex flex-col items-center gap-2 shadow-lg">
-    <img src="assets/logos/second-nature-white.svg" alt="Second Nature" class="h-7 md:h-8">
-    <div class="h-px w-16 bg-gradient-to-r from-sn-magenta to-sn-cyan opacity-60"></div>
-    <div class="text-sn-cyan text-xs md:text-sm font-heading font-bold tracking-[0.25em] uppercase mt-0.5">
+  <header class="w-full bg-sn-navy py-3 px-4 md:py-5 md:px-6 flex flex-col items-center gap-1.5 md:gap-2 shadow-lg">
+    <img src="assets/logos/second-nature-white.svg" alt="Second Nature" class="h-6 md:h-8">
+    <div class="h-px w-12 md:w-16 bg-gradient-to-r from-sn-magenta to-sn-cyan opacity-60"></div>
+    <div class="text-sn-cyan text-[10px] md:text-sm font-heading font-bold tracking-[0.2em] md:tracking-[0.25em] uppercase mt-0.5">
       Finance Team &mdash; Spin to Win
     </div>
   </header>
 
   <!-- Tabs -->
-  <nav class="flex gap-2 mt-6 mb-2">
+  <nav class="flex gap-2 mt-4 md:mt-6 mb-2" role="tablist" aria-label="Main sections">
     <button id="tab-wheel" onclick="switchTab('wheel')"
-      class="tab-btn tab-btn--active px-6 py-2 text-sm font-bold rounded-pill transition-all duration-200">
+      role="tab" aria-selected="true" aria-controls="section-wheel"
+      class="tab-btn tab-btn--active px-4 py-1.5 text-xs md:px-6 md:py-2 md:text-sm font-bold rounded-pill transition-all duration-200">
       Wheel
     </button>
     <button id="tab-history" onclick="switchTab('history')"
-      class="tab-btn tab-btn--inactive px-6 py-2 text-sm font-bold rounded-pill transition-all duration-200">
+      role="tab" aria-selected="false" aria-controls="section-history"
+      class="tab-btn tab-btn--inactive px-4 py-1.5 text-xs md:px-6 md:py-2 md:text-sm font-bold rounded-pill transition-all duration-200">
       History
     </button>
   </nav>
 
   <!-- Wheel Section -->
-  <main id="section-wheel" class="flex flex-col items-center w-full max-w-2xl px-4">
-    <div id="status-badge"
-      class="mb-3 px-4 py-1.5 bg-white/80 backdrop-blur rounded-pill text-sm font-semibold text-sn-navy shadow-sm border border-navy-10">
+  <main id="section-wheel" role="tabpanel" aria-labelledby="tab-wheel"
+    class="flex flex-col items-center w-full max-w-2xl px-3 md:px-4 overflow-hidden">
+    <div id="status-badge" aria-live="polite"
+      class="mb-2 md:mb-3 px-3 md:px-4 py-1 md:py-1.5 bg-white/80 backdrop-blur rounded-pill text-xs md:text-sm font-semibold text-sn-navy shadow-sm border border-navy-10">
       Loading...
     </div>
 
-    <div class="relative">
+    <div class="relative w-full flex justify-center">
       <canvas id="wheel"
-        class="rounded-full wheel-shadow max-w-[90vw] max-h-[90vw]">
+        role="img" aria-label="Spinning wheel with team member names"
+        class="rounded-full wheel-shadow">
       </canvas>
     </div>
 
     <button id="spin-btn" onclick="spin()"
-      class="mt-6 px-10 py-4 text-xl font-heading font-black tracking-wide bg-sn-navy text-white rounded-pill
+      class="mt-4 md:mt-6 px-8 py-3 text-lg md:px-10 md:py-4 md:text-xl font-heading font-black tracking-wide bg-sn-navy text-white rounded-pill
              transition-all duration-200 hover:bg-sn-violet hover:scale-105 active:scale-95
              disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:bg-sn-navy
              shadow-lg hover:shadow-xl">
       SPIN
     </button>
 
-    <div id="all-picked" class="hidden mt-4 text-center">
-      <p class="text-sn-violet font-heading font-bold text-lg mb-2">Everyone has been picked!</p>
+    <div id="all-picked" class="hidden mt-3 md:mt-4 text-center">
+      <p class="text-sn-violet font-heading font-bold text-base md:text-lg mb-2">Everyone has been picked!</p>
       <button onclick="clearHistory()"
-        class="px-6 py-2 bg-sn-violet text-white font-bold rounded-pill hover:bg-sn-magenta transition-all duration-200">
+        class="px-5 md:px-6 py-2 bg-sn-violet text-white font-bold rounded-pill hover:bg-sn-magenta transition-all duration-200">
         Clear &amp; Restart
       </button>
     </div>
   </main>
 
   <!-- History Section -->
-  <section id="section-history" class="hidden flex flex-col items-center w-full max-w-2xl px-4 mt-2">
+  <section id="section-history" role="tabpanel" aria-labelledby="tab-history"
+    class="hidden flex flex-col items-center w-full max-w-2xl px-3 md:px-4 mt-2">
     <div class="w-full bg-white rounded-2xl shadow-lg overflow-hidden border border-navy-10">
-      <div class="bg-sn-navy px-6 py-4 flex items-center justify-between">
-        <h2 class="text-white font-heading font-bold text-lg">Spin History</h2>
+      <div class="bg-sn-navy px-4 md:px-6 py-3 md:py-4 flex items-center justify-between">
+        <h2 class="text-white font-heading font-bold text-base md:text-lg">Spin History</h2>
         <button onclick="clearHistory()"
-          class="px-4 py-1.5 text-xs font-bold bg-sn-violet text-white rounded-pill hover:bg-sn-magenta transition-all duration-200">
+          class="px-3 md:px-4 py-1.5 text-xs font-bold bg-sn-violet text-white rounded-pill hover:bg-sn-magenta transition-all duration-200">
           Clear
         </button>
       </div>
-      <div id="history-content" class="p-4">
-        <p id="history-empty" class="text-center text-gray-400 py-8 text-sm">
+      <div id="history-content" class="p-3 md:p-4">
+        <p id="history-empty" class="text-center text-gray-400 py-6 md:py-8 text-sm">
           No spins yet. Go spin the wheel!
         </p>
         <table id="history-table" class="hidden w-full text-left">
+          <caption class="sr-only">History of spin results showing order, name, and time</caption>
           <thead>
             <tr class="border-b-2 border-navy-10">
-              <th class="py-2 px-3 text-xs font-bold text-navy-60 uppercase tracking-wider w-12">#</th>
-              <th class="py-2 px-3 text-xs font-bold text-navy-60 uppercase tracking-wider">Name</th>
-              <th class="py-2 px-3 text-xs font-bold text-navy-60 uppercase tracking-wider text-right">Time</th>
+              <th scope="col" class="py-2 px-2 md:px-3 text-xs font-bold text-navy-60 uppercase tracking-wider w-10 md:w-12">#</th>
+              <th scope="col" class="py-2 px-2 md:px-3 text-xs font-bold text-navy-60 uppercase tracking-wider">Name</th>
+              <th scope="col" class="py-2 px-2 md:px-3 text-xs font-bold text-navy-60 uppercase tracking-wider text-right">Time</th>
             </tr>
           </thead>
           <tbody id="history-tbody"></tbody>
@@ -105,15 +119,15 @@
   </section>
 
   <!-- Winner Overlay -->
-  <div id="winner-overlay"
-    class="hidden fixed inset-0 z-50 bg-navy-70 backdrop-blur-sm flex items-center justify-center p-4">
+  <div id="winner-overlay" role="dialog" aria-modal="true" aria-label="Winner announcement"
+    class="hidden fixed inset-0 z-50 bg-navy-70 backdrop-blur-sm flex items-center justify-center p-3 md:p-4">
     <div id="winner-card"
-      class="bg-white rounded-2xl shadow-2xl p-8 text-center max-w-sm w-full animate-scale-in animate-pulse-glow">
-      <div class="text-sn-cyan font-heading font-bold text-sm uppercase tracking-[0.3em] mb-1">Winner</div>
-      <div id="winner-name" class="text-sn-violet font-heading font-black text-4xl md:text-5xl mb-6 leading-tight"></div>
-      <div class="flex flex-col gap-3">
+      class="bg-white rounded-2xl shadow-2xl p-5 md:p-8 text-center max-w-sm w-full animate-scale-in animate-pulse-glow">
+      <div class="text-sn-cyan font-heading font-bold text-xs md:text-sm uppercase tracking-[0.3em] mb-1">Winner</div>
+      <div id="winner-name" class="text-sn-violet font-heading font-black text-3xl md:text-4xl lg:text-5xl mb-4 md:mb-6 leading-tight"></div>
+      <div class="flex flex-col gap-2 md:gap-3">
         <button onclick="closeOverlayAndSpin()"
-          class="px-8 py-3 bg-sn-navy text-white font-bold rounded-pill hover:bg-sn-violet transition-all duration-200 hover:scale-105 active:scale-95">
+          class="px-6 md:px-8 py-2.5 md:py-3 bg-sn-navy text-white font-bold rounded-pill hover:bg-sn-violet transition-all duration-200 hover:scale-105 active:scale-95">
           Spin Again
         </button>
         <button onclick="closeOverlay()"
@@ -125,9 +139,10 @@
   </div>
 
   <!-- Footer -->
-  <footer class="mt-auto py-5 flex flex-col items-center gap-2">
-    <img id="easter-heart" src="assets/logos/favicon.svg" alt="Second Nature" class="h-6 opacity-60" aria-label="Easter egg">
-    <span class="text-navy-40 text-xs font-semibold tracking-wide">
+  <footer class="mt-auto py-3 md:py-5 flex flex-col items-center gap-1.5 md:gap-2">
+    <img id="easter-heart" src="assets/logos/favicon.svg" alt="Second Nature logo" class="h-5 md:h-6 opacity-60"
+      role="button" tabindex="0" aria-label="Hidden surprise">
+    <span class="text-navy-40 text-[10px] md:text-xs font-semibold tracking-wide">
       Second Nature &mdash; Finance Team 2026
     </span>
   </footer>
