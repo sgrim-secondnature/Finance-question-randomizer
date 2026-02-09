@@ -3,41 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <title>Finance Team – Spin to Win</title>
-
-<style>
-  body{
-    margin:0;
-    min-height:100vh;
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    background:#f4f5f7;
-  }
-  .header{ text-align:center; margin-top:28px; line-height:1.1; }
-  .header .line1{ font-size:26px; font-weight:700; color:#444; letter-spacing:1px; }
-  .header .line2{ font-size:52px; font-weight:900; color:#6f2dbd; letter-spacing:2px; }
-
-  canvas{
-    margin-top:24px;
-    border-radius:50%;
-    box-shadow:0 10px 26px rgba(0,0,0,.25);
-    background:#fff;
-  }
-  button{
-    margin-top:20px;
-    padding:14px 28px;
-    font-size:18px;
-    font-weight:800;
-    background:#6f2dbd;
-    color:#fff;
-    border:none;
-    border-radius:12px;
-    cursor:pointer;
-  }
-  button:hover{ background:#5b22a0; }
-  .winner{ margin-top:16px; font-size:22px; font-weight:800; }
-</style>
+<link rel="stylesheet" href="styles/main.css">
 </head>
 
 <body>
@@ -50,86 +16,6 @@
   <button onclick="spin()">SPIN</button>
   <div class="winner" id="winner">Winner: —</div>
 
-<script>
-const names = [
-  "Chris P","Judith","Jason","Rob","Codi","Suanne","Bob","Julie",
-  "Chris R","Sam","Ian","Arbaaz","Taylor","Kirstin","Scarlett",
-  "Alli","Ashley","Dannielle","Mandy","Liz"
-];
-
-const canvas = document.getElementById("wheel");
-const ctx = canvas.getContext("2d");
-const r = canvas.width / 2;
-const slice = (Math.PI * 2) / names.length;
-
-let rotation = 0;
-let spinning = false;
-
-function drawWheel(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  names.forEach((name,i)=>{
-    const angle = rotation + i * slice;
-
-    ctx.beginPath();
-    ctx.moveTo(r,r);
-    ctx.arc(r,r,r-10,angle,angle+slice);
-    ctx.fillStyle = i % 2 === 0 ? "#9d4edd" : "#c77dff";
-    ctx.fill();
-
-    ctx.save();
-    ctx.translate(r,r);
-    ctx.rotate(angle + slice/2);
-    ctx.textAlign = "right";
-    ctx.fillStyle = "#fff";
-    ctx.font = "600 16px Arial";
-    ctx.fillText(name, r-20, 6);
-    ctx.restore();
-  });
-
-  // pointer at TOP (12 o’clock)
-  ctx.beginPath();
-  ctx.moveTo(r-12, 5);
-  ctx.lineTo(r+12, 5);
-  ctx.lineTo(r, 30);
-  ctx.closePath();
-  ctx.fillStyle = "#000";
-  ctx.fill();
-}
-
-function spin(){
-  if(spinning) return;
-  spinning = true;
-
-  const spins = Math.random()*5 + 6;
-  const target = rotation + spins * Math.PI * 2;
-  const start = performance.now();
-  const duration = 3000;
-
-  function animate(time){
-    const t = Math.min((time-start)/duration,1);
-    rotation = target * (1 - Math.pow(1-t,3));
-    drawWheel();
-
-    if(t < 1){
-      requestAnimationFrame(animate);
-    } else {
-      //  Correct winner under the TOP pointer (12 o’clock)
-      const twoPi = Math.PI * 2;
-      const normalized = ((rotation % twoPi) + twoPi) % twoPi; // 0..2π
-      const pointerAngle = (3 * Math.PI) / 2;                 // 12 o’clock
-      const relative = (pointerAngle - normalized + twoPi) % twoPi;
-      const index = Math.floor(relative / slice) % names.length;
-
-      document.getElementById("winner").textContent = "Winner: " + names[index];
-      spinning = false;
-    }
-  }
-  requestAnimationFrame(animate);
-}
-
-drawWheel();
-</script>
+  <script src="js/wheel.js"></script>
 </body>
-</html>
 </html>
