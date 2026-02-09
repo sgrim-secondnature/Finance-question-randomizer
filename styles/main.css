@@ -168,3 +168,193 @@ canvas {
 .text-navy-60   { color: rgba(var(--sn-navy-rgb), 0.6); }
 
 .bg-navy-70     { background-color: rgba(var(--sn-navy-rgb), 0.7); }
+
+/* --- Flappy Nature Easter Egg -------------------------------- */
+#easter-heart {
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#easter-heart:hover {
+  filter: brightness(1.15);
+  transform: scale(1.12);
+}
+
+#flappy-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--sn-navy-rgb), 0.7);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  padding: 1rem;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+#flappy-overlay.visible { opacity: 1; }
+#flappy-overlay.hidden  { display: none; }
+
+.flappy-modal {
+  background: var(--sn-light);
+  border-radius: 1rem;
+  box-shadow: 0 25px 60px rgba(var(--sn-navy-rgb), 0.4);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-width: 420px;
+  width: 100%;
+  animation: flappySlideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+}
+
+.flappy-modal__header {
+  background: var(--sn-navy);
+  color: var(--sn-white);
+  padding: 0.625rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-family-heading);
+  font-weight: 800;
+  font-size: 0.875rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.flappy-modal__close {
+  margin-left: 0.5rem;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  transition: color 0.15s ease, background 0.15s ease;
+  line-height: 1;
+}
+
+.flappy-modal__close:hover {
+  color: var(--sn-white);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.flappy-modal__body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.flappy-modal__body canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.flappy-modal__footer {
+  padding: 0.5rem 1rem;
+  text-align: center;
+  font-size: 0.625rem;
+  color: rgba(var(--sn-navy-rgb), 0.35);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+/* --- Title card popover (sits on top of canvas during idle) --- */
+.flappy-title-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--sn-navy-rgb), 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 5;
+  animation: flappyCardIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+}
+
+.flappy-title-card--out {
+  animation: flappyCardOut 0.3s ease-in forwards;
+}
+
+.flappy-title-card__icon {
+  margin-bottom: 0.75rem;
+  filter: drop-shadow(0 2px 8px rgba(101, 0, 217, 0.35));
+}
+
+.flappy-title-card__title {
+  font-family: var(--font-family-heading);
+  font-weight: 900;
+  font-size: 1.75rem;
+  color: var(--sn-white);
+  margin: 0 0 0.25rem;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  letter-spacing: 0.02em;
+}
+
+.flappy-title-card__hint {
+  font-family: var(--font-family-heading);
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0 0 0.125rem;
+}
+
+.flappy-title-card__best {
+  font-family: var(--font-family-heading);
+  font-weight: 700;
+  font-size: 0.75rem;
+  color: var(--sn-magenta);
+  margin: 0;
+}
+
+.flappy-title-card__play {
+  margin-top: 1.25rem;
+  font-family: var(--font-family-heading);
+  font-weight: 800;
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sn-white);
+  background: var(--sn-violet);
+  border: none;
+  border-radius: 2rem;
+  padding: 0.6rem 2.5rem;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(101, 0, 217, 0.4);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.flappy-title-card__play:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 24px rgba(101, 0, 217, 0.5);
+  background: var(--sn-midviolet);
+}
+
+.flappy-title-card__play:active {
+  transform: scale(0.97);
+}
+
+@keyframes flappyCardIn {
+  0%   { opacity: 0; transform: scale(0.85); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes flappyCardOut {
+  0%   { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.08); }
+}
+
+@keyframes flappySlideIn {
+  0%   { opacity: 0; transform: scale(0.6) translateY(40px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}

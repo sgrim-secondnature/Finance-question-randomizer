@@ -444,7 +444,8 @@ function closeOverlayAndSpin() {
 // ============================================================
 
 function addToHistory(name) {
-  const timeStr = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const now = new Date();
+  const timeStr = now.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' + now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   spinHistory.push({ name, time: timeStr });
   localStorage.setItem(TOKENS.storageKey, JSON.stringify(spinHistory));
   renderHistory();

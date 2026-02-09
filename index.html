@@ -126,12 +126,16 @@
 
   <!-- Footer -->
   <footer class="mt-auto py-5 flex flex-col items-center gap-2">
-    <img src="assets/logos/favicon.svg" alt="Second Nature" class="h-6 opacity-60">
+    <img id="easter-heart" src="assets/logos/favicon.svg" alt="Second Nature" class="h-6 opacity-60" aria-label="Easter egg">
     <span class="text-navy-40 text-xs font-semibold tracking-wide">
       Second Nature &mdash; Finance Team 2026
     </span>
   </footer>
 
+  <!-- Flappy Nature Easter Egg (isolated overlay — populated by JS) -->
+  <div id="flappy-overlay" class="hidden" role="dialog" aria-modal="true" aria-label="Flappy Nature game"></div>
+
   <script src="js/wheel.js"></script>
+  <script src="js/flappy.js"></script>
 </body>
 </html>
