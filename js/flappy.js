@@ -1835,7 +1835,7 @@
       ctx.fill();
     }
     // Hard-reset transform to identity (avoids sub-pixel drift from float rotate/untranslate)
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(_dpr, 0, 0, _dpr, 0, 0);
   }
 
   function drawScore() {
