@@ -29,6 +29,10 @@
   const BASE_W = 380;
   const BASE_H = 520;
 
+  const TAU = Math.PI * 2;
+  const DEG_TO_RAD = Math.PI / 180;
+  const MAX_DPR = 1;
+
   const CFG = {
     width:       BASE_W,
     height:      BASE_H,
@@ -143,6 +147,9 @@
   let skyGrad    = null;  // cached sky gradient
   let accentGrad = null;  // cached ground-accent gradient
   let pipeGrad   = null;  // cached pipe body gradient (translated per pipe)
+  let _pipeLipCanvas = null;   // pre-rendered pipe lip (offscreen canvas)
+  let _buildingCanvases = [];  // pre-rendered building offscreen canvases (parallel to bgLayers.buildings)
+  let _fpsString = '';         // cached FPS display string (rebuilt once/sec)
 
   /** Return max of fn(item) across arr without allocating a temporary array. */
   function maxOf(arr, fn) {
@@ -167,6 +174,12 @@
   let lastPipeTime, deadTime, frameTime;
   let globalTime = 0; // always-incrementing time for ambient animations
   let pausedTime = 0; // timestamp when we paused (to fix pipe-spawn drift)
+
+  /* --- FPS counter (smoothed rolling average) ----------------- */
+  let fpsFrames    = 0;
+  let fpsLastTime  = 0;
+  let fpsDisplay   = 0;  // smoothed value shown on screen
+  let fpsRaw       = 0;  // latest 1-second sample
   let prevStateBeforePause = null; // state before pause (so we resume correctly)
 
   /* --- Per-difficulty best scores ----------------------------- */
@@ -491,12 +504,12 @@
 
     for (let i = 0; i < dotCount; i++) {
       const phase = (t * 0.004 - i * 0.5);
-      const bounce = Math.sin(phase % (Math.PI * 2)) * 6;
-      const alpha = 0.35 + Math.max(0, Math.sin(phase % (Math.PI * 2))) * 0.65;
+      const bounce = Math.sin(phase % TAU) * 6;
+      const alpha = 0.35 + Math.max(0, Math.sin(phase % TAU)) * 0.65;
       ctx.globalAlpha = alpha;
       ctx.fillStyle = violet;
       ctx.beginPath();
-      ctx.arc(baseX + i * dotGap, baseY - Math.max(0, -bounce), dotR, 0, Math.PI * 2);
+      ctx.arc(baseX + i * dotGap, baseY - Math.max(0, -bounce), dotR, 0, TAU);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -546,6 +559,7 @@
       diffTitle:`800 12px ${CF}`,
       diffBtn:  `700 11px ${CF}`,
       diffBest: `600 9px ${CF}`,
+      fps:      `600 10px ${CF}`,
       deadTitle:`800 20px ${CF}`,
       deadScore:`700 14px ${CF}`,
       deadRetry:`600 12px ${CF}`,
@@ -561,8 +575,8 @@
     const cssW = Math.round(BASE_W * cssScale);
     const cssH = Math.round(BASE_H * cssScale);
 
-    // HiDPI: backing store uses logical game dimensions * dpr
-    const dpr = window.devicePixelRatio || 1;
+    // HiDPI: capped to MAX_DPR — flat-color geometric shapes don't benefit from Retina
+    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
     canvas.width  = BASE_W * dpr;
     canvas.height = BASE_H * dpr;
     // CSS display size scales to fit container
@@ -591,6 +605,28 @@
     pipeGrad.addColorStop(0, CC.navy);
     pipeGrad.addColorStop(1, CC.midviolet);
 
+    // Pre-render pipe lip to offscreen canvas (avoids 2 roundRect calls per pipe)
+    {
+      const lipW = CFG.pipeWidth + 8, lipH = 20, lipR = 8;
+      const offC = document.createElement('canvas');
+      offC.width = lipW; offC.height = lipH;
+      const oCtx = offC.getContext('2d');
+      oCtx.fillStyle = CC.violet;
+      oCtx.beginPath();
+      oCtx.moveTo(lipR, 0);
+      oCtx.lineTo(lipW - lipR, 0);
+      oCtx.quadraticCurveTo(lipW, 0, lipW, lipR);
+      oCtx.lineTo(lipW, lipH - lipR);
+      oCtx.quadraticCurveTo(lipW, lipH, lipW - lipR, lipH);
+      oCtx.lineTo(lipR, lipH);
+      oCtx.quadraticCurveTo(0, lipH, 0, lipH - lipR);
+      oCtx.lineTo(0, lipR);
+      oCtx.quadraticCurveTo(0, 0, lipR, 0);
+      oCtx.closePath();
+      oCtx.fill();
+      _pipeLipCanvas = offC;
+    }
+
     heartImg = await loadHeartImage(CC.violet);
 
     // --- Stop loading screen, finish init ---
@@ -608,6 +644,8 @@
 
     initClouds();
     initBackground();
+    _prerenderAllClouds();
+    _prerenderAllBuildings();
     applyDifficulty(currentDifficulty); // load saved (or default) difficulty
     resetGameState();
 
@@ -617,8 +655,9 @@
     canvas.addEventListener('mouseleave', () => { mouseX = mouseY = -1; settingsHover = false; });
 
     frameTime = performance.now();
+    fpsLastTime = frameTime;  // seed FPS counter
     accumulator = 0;   // reset fixed-timestep accumulator
-    loop();
+    rafId = requestAnimationFrame(loop); // let RAF provide vsync-aligned timestamp
   }
 
   function stopGame() {
@@ -834,7 +873,40 @@
         y: 30 + Math.random() * (CFG.height * 0.35),
         w: 40 + Math.random() * 50,
         speed: 0.15 + Math.random() * 0.25,
+        _canvas: null,  // will be filled by _prerenderCloud
       });
+    }
+  }
+
+  /** Pre-render a single cloud's 3 ellipses to an offscreen canvas. */
+  function _prerenderCloud(c) {
+    const pad = 4; // extra pixels around bounding box to avoid clipping
+    const w = c.w;
+    const h = w * 0.45;
+    const cW = Math.ceil(w + pad * 2);
+    const cH = Math.ceil(h + pad * 2);
+    const offC = document.createElement('canvas');
+    offC.width = cW; offC.height = cH;
+    const oCtx = offC.getContext('2d');
+    // Draw at full opacity — alpha is applied by the caller via ctx.globalAlpha
+    oCtx.fillStyle = CC.cyan;
+    oCtx.beginPath();
+    oCtx.ellipse(pad + w * 0.35, pad + h * 0.6, w * 0.35, h * 0.45, 0, 0, TAU);
+    oCtx.moveTo(pad + w * 0.65 + w * 0.3, pad + h * 0.5);
+    oCtx.ellipse(pad + w * 0.65, pad + h * 0.5, w * 0.3, h * 0.4, 0, 0, TAU);
+    oCtx.moveTo(pad + w * 0.5 + w * 0.25, pad + h * 0.35);
+    oCtx.ellipse(pad + w * 0.5, pad + h * 0.35, w * 0.25, h * 0.35, 0, 0, TAU);
+    oCtx.fill();
+    c._canvas = offC;
+    c._pad = pad;
+  }
+
+  /** Pre-render all cloud groups. Called once after initClouds + initBackground. */
+  function _prerenderAllClouds() {
+    for (let i = 0; i < clouds.length; i++) _prerenderCloud(clouds[i]);
+    if (bgLayers) {
+      for (let i = 0; i < bgLayers.farClouds.length; i++) _prerenderCloud(bgLayers.farClouds[i]);
+      for (let i = 0; i < bgLayers.midClouds.length; i++) _prerenderCloud(bgLayers.midClouds[i]);
     }
   }
 
@@ -870,6 +942,7 @@
         y: 15 + Math.random() * 60,
         w: 70 + Math.random() * 80,
         speed: BG.farSpeed,
+        _canvas: null, _pad: 0,
       });
     }
 
@@ -889,6 +962,7 @@
         y: 60 + Math.random() * 100,
         w: 35 + Math.random() * 45,
         speed: BG.midSpeed,
+        _canvas: null, _pad: 0,
       });
     }
 
@@ -1086,7 +1160,8 @@
     }
 
     // Buildings
-    for (const b of bgLayers.buildings) {
+    for (let bi = 0; bi < bgLayers.buildings.length; bi++) {
+      const b = bgLayers.buildings[bi];
       b.x -= midShift;
       if (b.x + b.w < -20) {
         const gap = 15 + Math.random() * 40;
@@ -1096,6 +1171,7 @@
         b.type = Math.random() < 0.4 ? 'house' : Math.random() < 0.65 ? 'apartment' : 'office';
         b.windows = Math.floor(Math.random() * 4) + 1;
         bgLayers.maxRightBuildings = b.x + b.w;
+        _prerenderBuilding(b, bi); // re-render on recycle
       }
     }
 
@@ -1131,37 +1207,44 @@
     const cyan = CC.cyan;
     const magenta = CC.magenta;
 
-    // Layer 0: Far clouds (batched single fill)
+    // Layer 0: Far clouds (pre-rendered)
     ctx.globalAlpha = BG.cloudFarAlpha;
-    ctx.fillStyle = cyan;
-    drawCloudsBatched(bgLayers.farClouds);
+    drawCloudsPrerendered(bgLayers.farClouds);
 
-    // Layer 1: Distant skyline
+    // Layer 1: Distant skyline (with visibility culling)
     ctx.globalAlpha = BG.skylineAlpha;
     ctx.fillStyle = navy;
     for (const seg of bgLayers.skyline) {
+      if (seg.x > CFG.width || seg.x + seg.totalW < 0) continue;
       drawSkylineSegment(seg);
     }
 
-    // Layer 2: Mid clouds (batched single fill)
+    // Layer 2: Mid clouds (pre-rendered)
     ctx.globalAlpha = BG.cloudMidAlpha;
-    ctx.fillStyle = cyan;
-    drawCloudsBatched(bgLayers.midClouds);
+    drawCloudsPrerendered(bgLayers.midClouds);
 
     // Layer 3: Planes with banners (from pool)
     for (let i = 0; i < planeActiveCount; i++) {
       drawPlane(planePool[i], navy, magenta, violet);
     }
 
-    // Layer 4: Buildings
+    // Layer 4: Buildings (pre-rendered, with visibility culling)
     ctx.globalAlpha = BG.buildingAlpha;
-    for (const b of bgLayers.buildings) {
-      drawBuilding(b, navy, violet);
+    for (let bi = 0; bi < bgLayers.buildings.length; bi++) {
+      const b = bgLayers.buildings[bi];
+      if (b.x + b.w < 0 || b.x > CFG.width) continue;
+      const offC = _buildingCanvases[bi];
+      if (offC) {
+        ctx.drawImage(offC, b.x - b._cacheOffX, b.y - b._cacheOffY);
+      } else {
+        drawBuilding(b, navy, violet);
+      }
     }
 
-    // Layer 5: Trees
+    // Layer 5: Trees (with visibility culling)
     ctx.globalAlpha = BG.treeAlpha;
     for (const t of bgLayers.trees) {
+      if (t.x + t.w < 0 || t.x > CFG.width) continue;
       drawTree(t, navy, violet);
     }
 
@@ -1289,8 +1372,92 @@
       // Round canopy
       ctx.fillStyle = violet;
       ctx.beginPath();
-      ctx.arc(cx, t.y - t.h * 0.55, t.w * 0.55, 0, Math.PI * 2);
+      ctx.arc(cx, t.y - t.h * 0.55, t.w * 0.55, 0, TAU);
       ctx.fill();
+    }
+  }
+
+  /* --- Pre-render building to offscreen canvas ---------------- */
+  function _prerenderBuilding(b, index) {
+    // Buildings extend 3px left (house roof overhang) and up to 8px above (antenna)
+    const pad = 4;
+    const extraLeft = 4;   // roof overhangs left by 3
+    const extraRight = 4;  // roof overhangs right by 3
+    const extraTop = 10;   // antenna is 8px above
+    const groundY = CFG.height - CFG.groundH;
+    const cW = Math.ceil(b.w + extraLeft + extraRight + pad * 2);
+    const cH = Math.ceil(b.h + extraTop + pad * 2);
+    const offC = document.createElement('canvas');
+    offC.width = cW; offC.height = cH;
+    const oCtx = offC.getContext('2d');
+    const navy = CC.navy;
+    const violet = CC.violet;
+    // Offset so b.x=0 maps to extraLeft+pad, b.y maps to extraTop+pad
+    const offX = extraLeft + pad;
+    const offY = extraTop + pad;
+
+    oCtx.fillStyle = navy;
+    switch (b.type) {
+      case 'house': {
+        oCtx.fillRect(offX, offY + 8, b.w, b.h - 8);
+        oCtx.beginPath();
+        oCtx.moveTo(offX - 3, offY + 8);
+        oCtx.lineTo(offX + b.w / 2, offY);
+        oCtx.lineTo(offX + b.w + 3, offY + 8);
+        oCtx.closePath();
+        oCtx.fill();
+        oCtx.fillStyle = violet;
+        const dw = b.w * 0.22;
+        oCtx.fillRect(offX + (b.w - dw) / 2, offY + b.h - 10, dw, 10);
+        oCtx.fillStyle = navy;
+        if (b.windows >= 1) {
+          oCtx.fillStyle = violet;
+          oCtx.fillRect(offX + 4, offY + 14, 4, 4);
+          if (b.w > 30) oCtx.fillRect(offX + b.w - 8, offY + 14, 4, 4);
+          oCtx.fillStyle = navy;
+        }
+        break;
+      }
+      case 'apartment': {
+        oCtx.fillRect(offX, offY, b.w, b.h);
+        oCtx.fillStyle = violet;
+        const cols = Math.max(2, Math.floor(b.w / 10));
+        const rows = Math.max(2, Math.floor(b.h / 14));
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            oCtx.fillRect(
+              offX + 4 + c * ((b.w - 8) / cols),
+              offY + 5 + r * ((b.h - 10) / rows),
+              3, 4
+            );
+          }
+        }
+        break;
+      }
+      case 'office': {
+        oCtx.fillRect(offX, offY, b.w, b.h);
+        oCtx.fillRect(offX + b.w / 2 - 1, offY - 8, 2, 8);
+        oCtx.fillStyle = violet;
+        const floors = Math.floor(b.h / 10);
+        for (let f = 0; f < floors; f++) {
+          oCtx.fillRect(offX + 2, offY + 4 + f * 10, b.w - 4, 1);
+        }
+        break;
+      }
+    }
+    b._cacheOffX = offX;
+    b._cacheOffY = offY;
+    b._cacheW = cW;
+    b._cacheH = cH;
+    _buildingCanvases[index] = offC;
+  }
+
+  /** Pre-render all buildings. Called once after initBackground. */
+  function _prerenderAllBuildings() {
+    _buildingCanvases = [];
+    if (!bgLayers) return;
+    for (let i = 0; i < bgLayers.buildings.length; i++) {
+      _prerenderBuilding(bgLayers.buildings[i], i);
     }
   }
 
@@ -1340,7 +1507,7 @@
 
     // Fuselage
     ctx.beginPath();
-    ctx.ellipse(px, py, 12, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(px, py, 12, 4, 0, 0, TAU);
     ctx.fill();
 
     // Nose cone
@@ -1393,21 +1560,29 @@
   function drawGroundDeco() {
     if (!bgLayers) return;
     const groundY = CFG.height - CFG.groundH;
+    const dashY = groundY + CFG.groundH / 2 - 1;
+    const dotY  = groundY + CFG.groundH * 0.7;
     ctx.globalAlpha = 0.15;
 
-    for (const g of bgLayers.groundDeco) {
-      if (g.type === 'dash') {
-        // Road-style dash
-        ctx.fillStyle = CC.cyan;
-        ctx.fillRect(g.x, groundY + CFG.groundH / 2 - 1, 8, 2);
-      } else {
-        // Small dot/rivet
-        ctx.fillStyle = CC.magenta;
-        ctx.beginPath();
-        ctx.arc(g.x, groundY + CFG.groundH * 0.7, 1.5, 0, Math.PI * 2);
-        ctx.fill();
+    // Pass 1: all dashes (fillRect loop, single fillStyle)
+    ctx.fillStyle = CC.cyan;
+    for (let i = 0, len = bgLayers.groundDeco.length; i < len; i++) {
+      const g = bgLayers.groundDeco[i];
+      if (g.type === 'dash') ctx.fillRect(g.x, dashY, 8, 2);
+    }
+
+    // Pass 2: all dots (single beginPath + all arcs + single fill)
+    ctx.fillStyle = CC.magenta;
+    ctx.beginPath();
+    for (let i = 0, len = bgLayers.groundDeco.length; i < len; i++) {
+      const g = bgLayers.groundDeco[i];
+      if (g.type !== 'dash') {
+        ctx.moveTo(g.x + 1.5, dotY);
+        ctx.arc(g.x, dotY, 1.5, 0, TAU);
       }
     }
+    ctx.fill();
+
     ctx.globalAlpha = 1;
   }
 
@@ -1420,8 +1595,8 @@
   const MAX_TICKS  = 4;                // safety cap — skip frames if way behind
   let accumulator  = 0;
 
-  function loop() {
-    const now   = performance.now();
+  function loop(rafTimestamp) {
+    const now   = rafTimestamp || performance.now();
     const delta = now - frameTime;     // real ms elapsed since last frame
     frameTime   = now;
 
@@ -1545,10 +1720,9 @@
     // === PARALLAX BACKGROUND (behind clouds & pipes) ===
     drawBackground();
 
-    // Near clouds (batched single fill)
-    ctx.fillStyle = CC.cyan;
+    // Near clouds (pre-rendered)
     ctx.globalAlpha = 0.12;
-    drawCloudsBatched(clouds);
+    drawCloudsPrerendered(clouds);
     ctx.globalAlpha = 1;
 
     // Pipes (from pool)
@@ -1573,6 +1747,9 @@
     // Score
     drawScore();
 
+    // FPS counter (top-left)
+    drawFps(now);
+
     // Fading controls hint (first few seconds of play)
     drawControlsHint(now);
 
@@ -1585,29 +1762,17 @@
     if (state === 'paused' || settingsOpen) drawDiffPicker();
   }
 
-  /** Add a single cloud's 3 ellipses to the CURRENT path (caller owns beginPath/fill). */
-  function addCloudToPath(x, y, w) {
-    const h = w * 0.45;
-    ctx.moveTo(x + w * 0.35 + w * 0.35, y + h * 0.6);
-    ctx.ellipse(x + w * 0.35, y + h * 0.6, w * 0.35, h * 0.45, 0, 0, Math.PI * 2);
-    ctx.moveTo(x + w * 0.65 + w * 0.3, y + h * 0.5);
-    ctx.ellipse(x + w * 0.65, y + h * 0.5, w * 0.3, h * 0.4, 0, 0, Math.PI * 2);
-    ctx.moveTo(x + w * 0.5 + w * 0.25, y + h * 0.35);
-    ctx.ellipse(x + w * 0.5, y + h * 0.35, w * 0.25, h * 0.35, 0, 0, Math.PI * 2);
-  }
-
-  /** Draw an array of clouds in a single batched fill call. */
-  function drawCloudsBatched(cloudArr) {
-    ctx.beginPath();
+  /** Draw an array of clouds using pre-rendered offscreen canvases. */
+  function drawCloudsPrerendered(cloudArr) {
     for (let i = 0, len = cloudArr.length; i < len; i++) {
       const c = cloudArr[i];
-      addCloudToPath(c.x, c.y, c.w);
+      if (c._canvas) {
+        ctx.drawImage(c._canvas, c.x - c._pad, c.y - c._pad);
+      }
     }
-    ctx.fill();
   }
 
   function drawPipe(p) {
-    const r  = 8; // corner radius
     const W  = CFG.pipeWidth;
     const gT = p.topH;
     const gB = p.topH + CFG.pipeGap;
@@ -1615,21 +1780,19 @@
     // Use cached pipe gradient — translate so origin aligns with pipe x
     ctx.translate(p.x, 0);
 
-    // Top pipe (gradient drawn at origin)
+    // Top pipe body (plain fillRect — corners hidden behind lip)
     ctx.fillStyle = pipeGrad;
-    roundRect(0, -4, W, gT + 4, r);
+    ctx.fillRect(0, -4, W, gT + 4);
 
-    // Lip on top pipe
-    ctx.fillStyle = CC.violet;
-    roundRect(-4, gT - 20, W + 8, 20, r);
+    // Lip on top pipe (pre-rendered)
+    ctx.drawImage(_pipeLipCanvas, -4, gT - 20);
 
-    // Bottom pipe (same cached gradient)
+    // Bottom pipe body (plain fillRect)
     ctx.fillStyle = pipeGrad;
-    roundRect(0, gB, W, CFG.height - gB, r);
+    ctx.fillRect(0, gB, W, CFG.height - gB);
 
-    // Lip on bottom pipe
-    ctx.fillStyle = CC.violet;
-    roundRect(-4, gB, W + 8, 20, r);
+    // Lip on bottom pipe (pre-rendered)
+    ctx.drawImage(_pipeLipCanvas, -4, gB);
 
     ctx.translate(-p.x, 0);
   }
@@ -1650,20 +1813,22 @@
   }
 
   function drawBird() {
-    ctx.save();
-    ctx.translate(CFG.birdX + CFG.birdSize / 2, bird.y + CFG.birdSize / 2);
-    ctx.rotate((bird.rot * Math.PI) / 180);
+    const cx = CFG.birdX + CFG.birdSize / 2;
+    const cy = bird.y + CFG.birdSize / 2;
+    const rad = bird.rot * DEG_TO_RAD;
+    ctx.translate(cx, cy);
+    ctx.rotate(rad);
 
     if (heartImg) {
       ctx.drawImage(heartImg, -CFG.birdSize / 2, -CFG.birdSize / 2, CFG.birdSize, CFG.birdSize);
     } else {
-      // Fallback circle
       ctx.fillStyle = CC.violet;
       ctx.beginPath();
-      ctx.arc(0, 0, CFG.birdSize / 2, 0, Math.PI * 2);
+      ctx.arc(0, 0, CFG.birdSize / 2, 0, TAU);
       ctx.fill();
     }
-    ctx.restore();
+    // Hard-reset transform to identity (avoids sub-pixel drift from float rotate/untranslate)
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   function drawScore() {
@@ -1677,6 +1842,30 @@
     ctx.globalAlpha = 1;
     ctx.fillStyle = CC.magenta;
     ctx.fillText(score, CFG.width / 2, 50);
+  }
+
+  /* --- FPS counter (top-left corner) -------------------------- */
+  function drawFps(now) {
+    fpsFrames++;
+    if (now - fpsLastTime >= 1000) {
+      fpsRaw      = fpsFrames;
+      fpsFrames   = 0;
+      fpsLastTime = now;
+      // Smooth: blend 70% previous display + 30% new sample, then round
+      fpsDisplay  = fpsDisplay ? Math.round(fpsDisplay * 0.7 + fpsRaw * 0.3) : fpsRaw;
+      _fpsString  = fpsDisplay + ' FPS';
+    }
+    if (fpsDisplay <= 0) return;
+
+    ctx.font       = FONTS.fps;
+    ctx.textAlign  = 'left';
+    ctx.textBaseline = 'top';
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle  = CC.navy;
+    ctx.fillText(_fpsString, 8, 8);
+    // Reset to expected defaults for subsequent draw calls
+    ctx.globalAlpha  = 1;
+    ctx.textBaseline = 'alphabetic';
   }
 
   /* --- In-game controls hint (fading) ------------------------- */
@@ -1721,7 +1910,7 @@
     } else {
       ctx.fillStyle = CC.violet;
       ctx.beginPath();
-      ctx.arc(_settingsBtnX, _settingsBtnY, s / 2, 0, Math.PI * 2);
+      ctx.arc(_settingsBtnX, _settingsBtnY, s / 2, 0, TAU);
       ctx.fill();
     }
 
@@ -1731,7 +1920,7 @@
       ctx.strokeStyle = CC.magenta;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(_settingsBtnX, _settingsBtnY, s / 2 + 4, 0, Math.PI * 2);
+      ctx.arc(_settingsBtnX, _settingsBtnY, s / 2 + 4, 0, TAU);
       ctx.stroke();
     }
 
