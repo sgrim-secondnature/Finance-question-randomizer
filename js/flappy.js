@@ -130,6 +130,7 @@
   /* --- Performance: cached values (populated once in startGame) --- */
   let CC = null;   // cached colors  – plain string map, avoids getComputedStyle per frame
   let CF = '';     // cached font    – heading font string
+  let FONTS = null; // cached font strings – avoids template literal allocation per frame
   let skyGrad    = null;  // cached sky gradient
   let accentGrad = null;  // cached ground-accent gradient
   let pipeGrad   = null;  // cached pipe body gradient (translated per pipe)
@@ -198,6 +199,8 @@
   let settingsHover  = false;  // is the mouse over the settings heart?
   let settingsOpen   = false;  // is the difficulty picker visible?
   let mouseX = -1, mouseY = -1; // canvas-local mouse coords (for hover)
+  let _currentCursor = '';      // tracks last cursor value to avoid redundant DOM writes
+  let _cachedDiffLayout = null; // cached diffPickerLayout — computed once in openDiffPicker
 
   /* --- In-game controls hint (fades after a few seconds) ----- */
   let hintStartTime = 0;       // set when gameplay begins
@@ -462,6 +465,19 @@
     };
     CF = FONT_HEADING();
 
+    // Pre-compute all font strings once (avoids template literal alloc per frame)
+    FONTS = {
+      banner:   `800 9px ${CF}`,
+      score:    `800 32px ${CF}`,
+      hint:     `600 11px ${CF}`,
+      diffTitle:`800 12px ${CF}`,
+      diffBtn:  `700 11px ${CF}`,
+      diffBest: `600 9px ${CF}`,
+      deadTitle:`800 20px ${CF}`,
+      deadScore:`700 14px ${CF}`,
+      deadRetry:`600 12px ${CF}`,
+    };
+
     // Responsive: compute display size to fit within the viewport
     const maxCssW = Math.min(BASE_W, window.innerWidth - 48);
     const cssScale = maxCssW / BASE_W;
@@ -585,7 +601,7 @@
   // Difficulty picker button hit-test — returns the key ('easy'|'normal'|'hard') or null
   function hitTestDiffPicker(cx, cy) {
     if (!settingsOpen) return null;
-    const card = diffPickerLayout();
+    const card = _cachedDiffLayout || diffPickerLayout();
     for (let i = 0; i < DIFF_KEYS.length; i++) {
       const btn = card.buttons[i];
       if (cx >= btn.x && cx <= btn.x + btn.w && cy >= btn.y && cy <= btn.y + btn.h) {
@@ -666,10 +682,14 @@
     mouseX = p.x;
     mouseY = p.y;
     settingsHover = isInsideSettingsBtn(p.x, p.y);
-    // Update cursor style
+    // Update cursor style (only when changed to avoid DOM style recalc)
     if (canvas) {
       const overPicker = settingsOpen && hitTestDiffPicker(p.x, p.y);
-      canvas.style.cursor = (settingsHover || overPicker) ? 'pointer' : 'default';
+      const desired = (settingsHover || overPicker) ? 'pointer' : 'default';
+      if (desired !== _currentCursor) {
+        _currentCursor = desired;
+        canvas.style.cursor = desired;
+      }
     }
   }
 
@@ -683,10 +703,12 @@
       prevStateBeforePause = state; // 'idle', 'dead', etc.
     }
     settingsOpen = true;
+    _cachedDiffLayout = diffPickerLayout();
   }
 
   function closeDiffPicker() {
     settingsOpen = false;
+    _cachedDiffLayout = null;
     if (state === 'paused' && prevStateBeforePause === 'play') {
       // Resume play — adjust lastPipeTime so pipe spawn doesn't fire immediately
       const elapsed = performance.now() - pausedTime;
@@ -710,6 +732,7 @@
     resetGameState();
     // Close picker without resuming (we're now in 'idle')
     settingsOpen = false;
+    _cachedDiffLayout = null;
     prevStateBeforePause = null;
   }
 
@@ -820,6 +843,12 @@
       });
       gx += 25 + Math.random() * 35;
     }
+
+    // --- Pre-compute maxRight edge trackers (avoids O(n^2) maxOf scans) ---
+    bgLayers.maxRightSkyline   = maxOf(bgLayers.skyline,    s  => s.x + s.totalW);
+    bgLayers.maxRightBuildings = maxOf(bgLayers.buildings,   bb => bb.x + bb.w);
+    bgLayers.maxRightTrees     = maxOf(bgLayers.trees,       tt => tt.x + tt.w);
+    bgLayers.maxRightGroundDeco = maxOf(bgLayers.groundDeco, gg => gg.x);
   }
 
   /* --- Skyline segment generators per city ------------------- */
@@ -916,7 +945,10 @@
       const p = bgLayers.planes[i];
       p.x += p.dir * p.speed * CFG.pipeSpeed * dt * ambientMul;
       if ((p.dir > 0 && p.x > W + 250 + p.bannerW) || (p.dir < 0 && p.x < -250 - p.bannerW)) {
-        bgLayers.planes.splice(i, 1);
+        // Swap-and-pop: O(1) removal (draw order doesn't matter for planes)
+        const last = bgLayers.planes.length - 1;
+        if (i !== last) bgLayers.planes[i] = bgLayers.planes[last];
+        bgLayers.planes.pop();
       }
     }
     if (now > nextPlaneTime && bgLayers.planes.length < 2) {
@@ -926,43 +958,60 @@
     // === Everything below only scrolls during active play ===
     if (!isPlaying) return;
 
+    // Shift maxRight trackers in lockstep with their layer speed
+    const skyShift  = BG.farSpeed  * CFG.pipeSpeed * dt;
+    const midShift  = BG.midSpeed  * CFG.pipeSpeed * dt;
+    const nearShift = BG.nearSpeed * CFG.pipeSpeed * dt;
+    bgLayers.maxRightSkyline    -= skyShift;
+    bgLayers.maxRightBuildings  -= midShift;
+    bgLayers.maxRightTrees      -= nearShift;
+    bgLayers.maxRightGroundDeco -= nearShift;
+
     // Skyline
     for (const seg of bgLayers.skyline) {
-      seg.x -= seg.speed * CFG.pipeSpeed * dt;
+      seg.x -= skyShift;
       if (seg.x + seg.totalW < -20) {
-        seg.x = maxOf(bgLayers.skyline, s => s.x + s.totalW) + 5;
+        const gap = 5;
+        seg.x = bgLayers.maxRightSkyline + gap;
+        bgLayers.maxRightSkyline = seg.x + seg.totalW;
         seg.city = SKYLINE_CITIES[Math.floor(Math.random() * SKYLINE_CITIES.length)];
       }
     }
 
     // Buildings
     for (const b of bgLayers.buildings) {
-      b.x -= b.speed * CFG.pipeSpeed * dt;
+      b.x -= midShift;
       if (b.x + b.w < -20) {
-        b.x = maxOf(bgLayers.buildings, bb => bb.x + bb.w) + 15 + Math.random() * 40;
+        const gap = 15 + Math.random() * 40;
+        b.x = bgLayers.maxRightBuildings + gap;
         b.h = 30 + Math.random() * 60;
         b.y = (CFG.height - CFG.groundH) - b.h;
         b.type = Math.random() < 0.4 ? 'house' : Math.random() < 0.65 ? 'apartment' : 'office';
         b.windows = Math.floor(Math.random() * 4) + 1;
+        bgLayers.maxRightBuildings = b.x + b.w;
       }
     }
 
     // Trees
     for (const t of bgLayers.trees) {
-      t.x -= t.speed * CFG.pipeSpeed * dt;
+      t.x -= nearShift;
       if (t.x + t.w < -20) {
-        t.x = maxOf(bgLayers.trees, tt => tt.x + tt.w) + 20 + Math.random() * 50;
+        const gap = 20 + Math.random() * 50;
+        t.x = bgLayers.maxRightTrees + gap;
         t.w = BG.treeMinW + Math.random() * (BG.treeMaxW - BG.treeMinW);
         t.h = t.w * (1.5 + Math.random());
         t.type = Math.random() < 0.3 ? 'pine' : 'round';
+        bgLayers.maxRightTrees = t.x + t.w;
       }
     }
 
     // Ground deco
     for (const g of bgLayers.groundDeco) {
-      g.x -= BG.nearSpeed * CFG.pipeSpeed * dt;
+      g.x -= nearShift;
       if (g.x < -10) {
-        g.x = maxOf(bgLayers.groundDeco, gg => gg.x) + 25 + Math.random() * 35;
+        const gap = 25 + Math.random() * 35;
+        g.x = bgLayers.maxRightGroundDeco + gap;
+        bgLayers.maxRightGroundDeco = g.x;
       }
     }
   }
@@ -975,14 +1024,10 @@
     const cyan = CC.cyan;
     const magenta = CC.magenta;
 
-    ctx.save();
-
-    // Layer 0: Far clouds
+    // Layer 0: Far clouds (batched single fill)
     ctx.globalAlpha = BG.cloudFarAlpha;
     ctx.fillStyle = cyan;
-    for (const c of bgLayers.farClouds) {
-      drawCloud(c.x, c.y, c.w);
-    }
+    drawCloudsBatched(bgLayers.farClouds);
 
     // Layer 1: Distant skyline
     ctx.globalAlpha = BG.skylineAlpha;
@@ -991,12 +1036,10 @@
       drawSkylineSegment(seg);
     }
 
-    // Layer 2: Mid clouds
+    // Layer 2: Mid clouds (batched single fill)
     ctx.globalAlpha = BG.cloudMidAlpha;
     ctx.fillStyle = cyan;
-    for (const c of bgLayers.midClouds) {
-      drawCloud(c.x, c.y, c.w);
-    }
+    drawCloudsBatched(bgLayers.midClouds);
 
     // Layer 3: Planes with banners
     for (const p of bgLayers.planes) {
@@ -1016,7 +1059,6 @@
     }
 
     ctx.globalAlpha = 1;
-    ctx.restore();
   }
 
   /* --- Draw: skyline silhouette ------------------------------ */
@@ -1147,7 +1189,6 @@
 
   /* --- Draw: plane with banner ------------------------------- */
   function drawPlane(p, navy, magenta, violet) {
-    ctx.save();
     const wobbleY = Math.sin(globalTime * 0.0015 + p.wobble) * 3;
     const py = p.y + wobbleY;
     const dir = p.dir;   // +1 = flying right, -1 = flying left
@@ -1181,7 +1222,7 @@
     // Banner text — full opacity relative to the banner so it's legible
     ctx.globalAlpha = BG.bannerAlpha + 0.15; // text slightly more opaque than bg
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = `800 9px ${CF}`;
+    ctx.font = FONTS.banner;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(p.bannerText, bLeft + bw / 2, bTop + bh / 2 + 0.5);
@@ -1220,7 +1261,9 @@
     ctx.closePath();
     ctx.fill();
 
-    ctx.restore();
+    // Reset state changed by drawPlane (globalAlpha, textBaseline, lineWidth)
+    ctx.globalAlpha = 1;
+    ctx.textBaseline = 'alphabetic';
   }
 
   /* Helper for plane banner rounded rect (doesn't call fill) */
@@ -1243,7 +1286,6 @@
   function drawGroundDeco() {
     if (!bgLayers) return;
     const groundY = CFG.height - CFG.groundH;
-    ctx.save();
     ctx.globalAlpha = 0.15;
 
     for (const g of bgLayers.groundDeco) {
@@ -1259,7 +1301,7 @@
         ctx.fill();
       }
     }
-    ctx.restore();
+    ctx.globalAlpha = 1;
   }
 
   /* --- Main loop (fixed-timestep) ----------------------------- */
@@ -1287,7 +1329,7 @@
     // If we hit the cap, throw away excess time so we don't spiral
     if (ticks >= MAX_TICKS) accumulator = 0;
 
-    draw();
+    draw(now);
 
     rafId = requestAnimationFrame(loop);
   }
@@ -1338,8 +1380,13 @@
       const p = pipes[i];
       p.x -= CFG.pipeSpeed * dt;
 
-      // Remove off-screen
-      if (p.x + CFG.pipeWidth < 0) { pipes.splice(i, 1); continue; }
+      // Remove off-screen (swap-and-pop: O(1), draw order doesn't matter)
+      if (p.x + CFG.pipeWidth < 0) {
+        const last = pipes.length - 1;
+        if (i !== last) pipes[i] = pipes[last];
+        pipes.pop();
+        continue;
+      }
 
       // Score
       if (!p.scored && p.x + CFG.pipeWidth < CFG.birdX) {
@@ -1372,7 +1419,7 @@
   }
 
   /* --- Draw ------------------------------------------------- */
-  function draw() {
+  function draw(now) {
     const W = CFG.width;
     const H = CFG.height;
 
@@ -1383,12 +1430,10 @@
     // === PARALLAX BACKGROUND (behind clouds & pipes) ===
     drawBackground();
 
-    // Near clouds (original layer — slightly more opaque than BG clouds)
+    // Near clouds (batched single fill)
     ctx.fillStyle = CC.cyan;
     ctx.globalAlpha = 0.12;
-    for (const c of clouds) {
-      drawCloud(c.x, c.y, c.w);
-    }
+    drawCloudsBatched(clouds);
     ctx.globalAlpha = 1;
 
     // Pipes
@@ -1414,7 +1459,7 @@
     drawScore();
 
     // Fading controls hint (first few seconds of play)
-    drawControlsHint();
+    drawControlsHint(now);
 
     // Settings heart button (always on top except behind popups)
     drawSettingsBtn();
@@ -1424,16 +1469,24 @@
     if (state === 'paused' || settingsOpen) drawDiffPicker();
   }
 
-  function drawCloud(x, y, w) {
+  /** Add a single cloud's 3 ellipses to the CURRENT path (caller owns beginPath/fill). */
+  function addCloudToPath(x, y, w) {
     const h = w * 0.45;
-    ctx.beginPath();
+    ctx.moveTo(x + w * 0.35 + w * 0.35, y + h * 0.6);
     ctx.ellipse(x + w * 0.35, y + h * 0.6, w * 0.35, h * 0.45, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
+    ctx.moveTo(x + w * 0.65 + w * 0.3, y + h * 0.5);
     ctx.ellipse(x + w * 0.65, y + h * 0.5, w * 0.3, h * 0.4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
+    ctx.moveTo(x + w * 0.5 + w * 0.25, y + h * 0.35);
     ctx.ellipse(x + w * 0.5, y + h * 0.35, w * 0.25, h * 0.35, 0, 0, Math.PI * 2);
+  }
+
+  /** Draw an array of clouds in a single batched fill call. */
+  function drawCloudsBatched(cloudArr) {
+    ctx.beginPath();
+    for (let i = 0, len = cloudArr.length; i < len; i++) {
+      const c = cloudArr[i];
+      addCloudToPath(c.x, c.y, c.w);
+    }
     ctx.fill();
   }
 
@@ -1444,7 +1497,6 @@
     const gB = p.topH + CFG.pipeGap;
 
     // Use cached pipe gradient — translate so origin aligns with pipe x
-    ctx.save();
     ctx.translate(p.x, 0);
 
     // Top pipe (gradient drawn at origin)
@@ -1463,7 +1515,7 @@
     ctx.fillStyle = CC.violet;
     roundRect(-4, gB, W + 8, 20, r);
 
-    ctx.restore();
+    ctx.translate(-p.x, 0);
   }
 
   function roundRect(x, y, w, h, r) {
@@ -1501,8 +1553,7 @@
   function drawScore() {
     if (state === 'idle') return;
 
-    ctx.save();
-    ctx.font = `800 32px ${CF}`;
+    ctx.font = FONTS.score;
     ctx.textAlign = 'center';
     ctx.fillStyle = CC.navy;
     ctx.globalAlpha = 0.12;
@@ -1510,13 +1561,12 @@
     ctx.globalAlpha = 1;
     ctx.fillStyle = CC.magenta;
     ctx.fillText(score, CFG.width / 2, 50);
-    ctx.restore();
   }
 
   /* --- In-game controls hint (fading) ------------------------- */
-  function drawControlsHint() {
+  function drawControlsHint(now) {
     if (state !== 'play' || hintStartTime === 0) return;
-    const elapsed = performance.now() - hintStartTime;
+    const elapsed = now - hintStartTime;
     if (elapsed > HINT_DURATION) return; // fully gone
 
     // Compute alpha: full opacity, then fade out at the end
@@ -1527,17 +1577,16 @@
     }
     if (alpha <= 0) return;
 
-    ctx.save();
     ctx.globalAlpha = alpha;
     ctx.textAlign = 'center';
 
     // "Space / Click to flap" — centered below the score
     const cy = 78;
-    ctx.font = `600 11px ${CF}`;
+    ctx.font = FONTS.hint;
     ctx.fillStyle = CC.navy;
     ctx.fillText('Space / Click to flap', CFG.width / 2, cy);
 
-    ctx.restore();
+    ctx.globalAlpha = 1;
   }
 
   /* --- Settings heart button (top-right on canvas) ----------- */
@@ -1577,22 +1626,24 @@
   /* --- Difficulty picker popup (drawn on canvas) ------------- */
   function drawDiffPicker() {
     if (!settingsOpen) return;
-    const layout = diffPickerLayout();
+    const layout = _cachedDiffLayout || diffPickerLayout();
     ctx.save();
 
     // Semi-transparent scrim behind the card
     ctx.fillStyle = 'rgba(9, 9, 73, 0.3)';
     ctx.fillRect(0, 0, CFG.width, CFG.height);
 
+    // Card shadow (two offset translucent rects instead of shadowBlur)
+    ctx.fillStyle = 'rgba(0,0,0,0.08)';
+    roundRect(layout.x + 2, layout.y + 4, layout.w, layout.h, 12);
+    ctx.fillStyle = 'rgba(0,0,0,0.05)';
+    roundRect(layout.x + 1, layout.y + 2, layout.w, layout.h, 12);
     // Card background
     ctx.fillStyle = CC.white;
-    ctx.shadowColor = 'rgba(0,0,0,0.18)';
-    ctx.shadowBlur  = 16;
     roundRect(layout.x, layout.y, layout.w, layout.h, 12);
-    ctx.shadowBlur = 0;
 
     // Title
-    ctx.font = `800 12px ${CF}`;
+    ctx.font = FONTS.diffTitle;
     ctx.textAlign = 'center';
     ctx.fillStyle = CC.navy;
     ctx.fillText('Difficulty', layout.x + layout.w / 2, layout.y + 22);
@@ -1617,12 +1668,12 @@
 
       // Button label (left-aligned) + best score (right-aligned)
       const bst = bestScores[key] || 0;
-      ctx.font = `700 11px ${CF}`;
+      ctx.font = FONTS.diffBtn;
       ctx.textAlign = 'left';
       ctx.fillStyle = isActive ? CC.white : CC.navy;
       ctx.fillText(DIFF_LABELS[key], btn.x + 10, btn.y + btn.h / 2 + 4);
       if (bst > 0) {
-        ctx.font = `600 9px ${CF}`;
+        ctx.font = FONTS.diffBest;
         ctx.textAlign = 'right';
         ctx.globalAlpha = isActive ? 0.75 : 0.45;
         ctx.fillText('Best: ' + bst, btn.x + btn.w - 10, btn.y + btn.h / 2 + 3);
@@ -1645,25 +1696,27 @@
     const cardH = 150;
     const cx    = (CFG.width  - cardW) / 2;
     const cy    = (CFG.height - cardH) / 2 - 15;
+    // Card shadow (two offset translucent rects instead of shadowBlur)
+    ctx.fillStyle = 'rgba(0,0,0,0.09)';
+    roundRect(cx + 2, cy + 5, cardW, cardH, 16);
+    ctx.fillStyle = 'rgba(0,0,0,0.05)';
+    roundRect(cx + 1, cy + 2, cardW, cardH, 16);
     ctx.fillStyle = CC.white;
-    ctx.shadowColor = 'rgba(0,0,0,0.2)';
-    ctx.shadowBlur  = 20;
     roundRect(cx, cy, cardW, cardH, 16);
-    ctx.shadowBlur = 0;
 
-    ctx.font = `800 20px ${CF}`;
+    ctx.font = FONTS.deadTitle;
     ctx.textAlign = 'center';
     ctx.fillStyle = CC.navy;
     ctx.fillText('Game Over', CFG.width / 2, cy + 38);
 
-    ctx.font = `700 14px ${CF}`;
+    ctx.font = FONTS.deadScore;
     ctx.fillStyle = CC.violet;
     ctx.fillText(`Score: ${score}`, CFG.width / 2, cy + 68);
 
     ctx.fillStyle = CC.magenta;
     ctx.fillText(`Best: ${bestScore()}`, CFG.width / 2, cy + 90);
 
-    ctx.font = `600 12px ${CF}`;
+    ctx.font = FONTS.deadRetry;
     ctx.fillStyle = CC.navy;
     ctx.globalAlpha = 0.5;
     ctx.fillText('Space / Click to retry', CFG.width / 2, cy + 128);
