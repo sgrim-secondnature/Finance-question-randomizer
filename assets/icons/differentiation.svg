@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 443.78 406.54">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #e5d4fc;
+      }
+
+      .cls-2 {
+        fill: #fe916e;
+      }
+
+      .cls-3 {
+        fill: #6500d9;
+      }
+
+      .cls-4 {
+        fill: #fbb5a0;
+      }
+    </style>
+  </defs>
+  <rect class="cls-1" x="52.05" y="81.65" width="339.68" height="289.77" rx="32.96" ry="32.96"/>
+  <rect class="cls-2" x="267.93" y="205.77" width="92.09" height="133.02"/>
+  <rect class="cls-3" x="175.85" y="142.27" width="92.09" height="196.52"/>
+  <rect class="cls-4" x="83.75" y="253.97" width="92.09" height="84.82"/>
+  <g id="_2021_SN_Hearti_Logo_Purple" data-name="2021_SN_Hearti_Logo_Purple">
+    <path class="cls-3" d="M227.78,44.12l-5.77,5.77-6.41-6.41c-12.01-12-32.05-11.08-42.8,2.79-8.89,11.47-7.13,27.98,3.13,38.24l41.99,41.99c2.26,2.26,5.92,2.26,8.17,0l42.88-42.88c11.35-11.35,11.14-29.88-.63-40.96-11.37-10.71-29.52-9.59-40.57,1.46"/>
+  </g>
+</svg>

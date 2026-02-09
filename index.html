@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Second Nature – Finance Team Spin to Win</title>
 
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="assets/logos/favicon.svg">
+
+  <!-- Fonts: Apertura (Adobe Typekit) + Poppins (Google Fonts) — same as secondnature.com -->
+  <link rel="preconnect" href="https://use.typekit.net" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://use.typekit.net/sxz0xrf.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800;900&display=swap">
+
   <!-- Styles: single source of truth for all design tokens -->
   <link rel="stylesheet" href="styles/main.css">
 
@@ -16,10 +26,10 @@
 <body class="min-h-screen bg-gradient-to-br from-sn-light to-white flex flex-col items-center animate-fade-in">
 
   <!-- Header -->
-  <header class="w-full bg-sn-navy py-5 px-6 flex flex-col items-center gap-1 shadow-lg">
-    <div class="text-white text-2xl md:text-3xl font-light tracking-wider lowercase">second nature</div>
+  <header class="w-full bg-sn-navy py-5 px-6 flex flex-col items-center gap-2 shadow-lg">
+    <img src="assets/logos/second-nature-white.svg" alt="Second Nature" class="h-7 md:h-8">
     <div class="h-px w-16 bg-gradient-to-r from-sn-magenta to-sn-cyan opacity-60"></div>
-    <div class="text-sn-cyan text-xs md:text-sm font-bold tracking-[0.25em] uppercase mt-1">
+    <div class="text-sn-cyan text-xs md:text-sm font-heading font-bold tracking-[0.25em] uppercase mt-0.5">
       Finance Team &mdash; Spin to Win
     </div>
   </header>
@@ -50,7 +60,7 @@
     </div>
 
     <button id="spin-btn" onclick="spin()"
-      class="mt-6 px-10 py-4 text-xl font-black tracking-wide bg-sn-navy text-white rounded-pill
+      class="mt-6 px-10 py-4 text-xl font-heading font-black tracking-wide bg-sn-navy text-white rounded-pill
              transition-all duration-200 hover:bg-sn-violet hover:scale-105 active:scale-95
              disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:bg-sn-navy
              shadow-lg hover:shadow-xl">
@@ -58,7 +68,7 @@
     </button>
 
     <div id="all-picked" class="hidden mt-4 text-center">
-      <p class="text-sn-violet font-bold text-lg mb-2">Everyone has been picked!</p>
+      <p class="text-sn-violet font-heading font-bold text-lg mb-2">Everyone has been picked!</p>
       <button onclick="clearHistory()"
         class="px-6 py-2 bg-sn-violet text-white font-bold rounded-pill hover:bg-sn-magenta transition-all duration-200">
         Clear &amp; Restart
@@ -70,7 +80,7 @@
   <section id="section-history" class="hidden flex flex-col items-center w-full max-w-2xl px-4 mt-2">
     <div class="w-full bg-white rounded-2xl shadow-lg overflow-hidden border border-navy-10">
       <div class="bg-sn-navy px-6 py-4 flex items-center justify-between">
-        <h2 class="text-white font-bold text-lg">Spin History</h2>
+        <h2 class="text-white font-heading font-bold text-lg">Spin History</h2>
         <button onclick="clearHistory()"
           class="px-4 py-1.5 text-xs font-bold bg-sn-violet text-white rounded-pill hover:bg-sn-magenta transition-all duration-200">
           Clear
@@ -99,8 +109,8 @@
     class="hidden fixed inset-0 z-50 bg-navy-70 backdrop-blur-sm flex items-center justify-center p-4">
     <div id="winner-card"
       class="bg-white rounded-2xl shadow-2xl p-8 text-center max-w-sm w-full animate-scale-in animate-pulse-glow">
-      <div class="text-sn-cyan font-bold text-sm uppercase tracking-[0.3em] mb-1">Winner</div>
-      <div id="winner-name" class="text-sn-violet font-black text-4xl md:text-5xl mb-6 leading-tight"></div>
+      <div class="text-sn-cyan font-heading font-bold text-sm uppercase tracking-[0.3em] mb-1">Winner</div>
+      <div id="winner-name" class="text-sn-violet font-heading font-black text-4xl md:text-5xl mb-6 leading-tight"></div>
       <div class="flex flex-col gap-3">
         <button onclick="closeOverlayAndSpin()"
           class="px-8 py-3 bg-sn-navy text-white font-bold rounded-pill hover:bg-sn-violet transition-all duration-200 hover:scale-105 active:scale-95">
@@ -115,8 +125,11 @@
   </div>
 
   <!-- Footer -->
-  <footer class="mt-auto py-4 text-center text-navy-40 text-xs font-semibold tracking-wide">
-    Second Nature &mdash; Finance Team 2026
+  <footer class="mt-auto py-5 flex flex-col items-center gap-2">
+    <img src="assets/logos/favicon.svg" alt="Second Nature" class="h-6 opacity-60">
+    <span class="text-navy-40 text-xs font-semibold tracking-wide">
+      Second Nature &mdash; Finance Team 2026
+    </span>
   </footer>
 
   <script src="js/wheel.js"></script>

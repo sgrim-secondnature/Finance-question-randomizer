@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 443.78 406.54">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #dbc2f5;
+      }
+
+      .cls-2 {
+        fill: #ff9277;
+      }
+
+      .cls-3 {
+        fill: #fff;
+      }
+
+      .cls-4 {
+        fill: #6500d9;
+      }
+
+      .cls-5 {
+        fill: #fbb5a0;
+      }
+
+      .cls-6 {
+        fill: #c399ef;
+      }
+
+      .cls-7 {
+        fill: #6700d7;
+      }
+    </style>
+  </defs>
+  <rect class="cls-1" x="73.95" y="190.26" width="295.88" height="169.76" rx="29.99" ry="29.99"/>
+  <path class="cls-3" d="M103.15,118.9h237.48v182.43c0,16.72-13.57,30.29-30.29,30.29h-176.73c-16.81,0-30.46-13.65-30.46-30.46V118.9h0Z"/>
+  <rect class="cls-4" x="103.15" y="118.9" width="237.48" height="50.58"/>
+  <g>
+    <rect class="cls-6" x="146.26" y="92.21" width="25.93" height="53.37" rx="12.97" ry="12.97"/>
+    <rect class="cls-6" x="271.58" y="92.21" width="25.93" height="53.37" rx="12.97" ry="12.97"/>
+  </g>
+  <rect class="cls-4" x="163.93" y="206.92" width="33.64" height="33.64"/>
+  <rect class="cls-4" x="205.07" y="206.92" width="33.64" height="33.64"/>
+  <rect class="cls-4" x="246.21" y="206.92" width="33.64" height="33.64"/>
+  <rect class="cls-4" x="287.34" y="206.92" width="33.64" height="33.64"/>
+  <rect class="cls-4" x="287.34" y="252.75" width="33.64" height="33.64"/>
+  <rect class="cls-4" x="122.8" y="252.75" width="33.64" height="33.64"/>
+  <rect class="cls-4" x="163.93" y="252.75" width="33.64" height="33.64"/>
+  <rect class="cls-4" x="205.07" y="252.75" width="33.64" height="33.64"/>
+  <rect class="cls-4" x="246.21" y="252.75" width="33.64" height="33.64"/>
+  <g>
+    <circle class="cls-5" cx="322.93" cy="62.29" r="15.78"/>
+    <polygon class="cls-5" points="111.08 48.58 112.05 84.24 146.33 54.06 111.08 48.58"/>
+    <polygon class="cls-2" points="391.93 121.64 398.07 86.49 358.47 109.25 391.93 121.64"/>
+    <circle class="cls-2" cx="61.48" cy="109.02" r="15.78"/>
+  </g>
+  <g id="_2021_SN_Hearti_Logo_Purple" data-name="2021_SN_Hearti_Logo_Purple">
+    <path class="cls-7" d="M141.51,210.98l-1.96,1.96-2.18-2.18c-4.08-4.08-10.89-3.76-14.55.95-3.02,3.9-2.42,9.51,1.06,13l14.27,14.27c.77.77,2.01.77,2.78,0l14.57-14.57c3.86-3.86,3.79-10.15-.21-13.92-3.87-3.64-10.03-3.26-13.79.5"/>
+  </g>
+</svg>

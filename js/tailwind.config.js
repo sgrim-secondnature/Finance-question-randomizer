@@ -7,6 +7,10 @@
 tailwind.config = {
   theme: {
     extend: {
+      fontFamily: {
+        sans:    ['apertura', 'Apertura', 'system-ui', '-apple-system', 'sans-serif'],
+        heading: ['Poppins', 'apertura', 'system-ui', 'sans-serif'],
+      },
       colors: {
         sn: {
           violet:    'var(--sn-violet)',
