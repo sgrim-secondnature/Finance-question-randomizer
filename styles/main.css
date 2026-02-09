@@ -1,32 +1,162 @@
-body{
-  margin:0;
-  min-height:100vh;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  background:#f4f5f7;
-}
-.header{ text-align:center; margin-top:28px; line-height:1.1; }
-.header .line1{ font-size:26px; font-weight:700; color:#444; letter-spacing:1px; }
-.header .line2{ font-size:52px; font-weight:900; color:#6f2dbd; letter-spacing:2px; }
+/* ============================================================
+   Second Nature – Design Tokens & Styles
+   Single source of truth for all design values.
+   JS (wheel.js) and Tailwind (tailwind.config.js) both read
+   from these CSS custom properties — nothing is duplicated.
+   ============================================================ */
 
-canvas{
-  margin-top:24px;
-  border-radius:50%;
-  box-shadow:0 10px 26px rgba(0,0,0,.25);
-  background:#fff;
+/* --- Design Tokens ----------------------------------------- */
+:root {
+  /* Brand colors — hex + RGB channels for alpha utilities */
+  --sn-violet:      #6500D9;
+  --sn-violet-rgb:  101, 0, 217;
+  --sn-cyan:        #00D9FF;
+  --sn-cyan-rgb:    0, 217, 255;
+  --sn-magenta:     #D76EFF;
+  --sn-magenta-rgb: 215, 110, 255;
+  --sn-navy:        #090949;
+  --sn-navy-rgb:    9, 9, 73;
+  --sn-light:       #FBF6F6;
+  --sn-midviolet:   #4B00A0;
+  --sn-white:       #FFFFFF;
+
+  /* Wheel slice palette (JS parses this) */
+  --sn-wheel-colors: var(--sn-violet), var(--sn-navy), var(--sn-magenta), var(--sn-midviolet);
+
+  /* Opacity levels */
+  --opacity-dimmed:    0.3;
+  --opacity-separator: 0.35;
+  --opacity-muted:     0.4;
+  --opacity-flash:     0.6;
+  --opacity-hover:     0.06;
+  --opacity-border:    0.2;
+
+  /* Typography */
+  --font-family:       system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-weight-label: 700;
+  --font-size-label:   14px;
+
+  /* Wheel geometry (unitless — used in JS calculations) */
+  --wheel-size:            520;
+  --wheel-inset:           10;
+  --wheel-center-radius:   32;
+  --wheel-center-ring:     34;
+  --wheel-center-dot:      8;
+  --wheel-pointer-half-w:  14;
+  --wheel-pointer-top:     2;
+  --wheel-pointer-tip:     32;
+  --wheel-text-offset-x:   22;
+  --wheel-text-offset-y:   5;
+  --wheel-separator-width: 1.5;
+  --wheel-ring-width:      2.5;
+
+  /* Canvas shadow / stroke details */
+  --label-shadow-blur:     3;
+  --label-shadow-offset-y: 1;
+  --pointer-shadow-blur:   8;
+  --pointer-shadow-offset: 2;
+  --pointer-shadow-opacity: 0.5;
+  --pointer-stroke-width:  1;
+  --center-gradient-pad:   6;
+
+  /* Animation timing */
+  --spin-duration:        4500;
+  --spin-min-rotations:   8;
+  --spin-extra-rotations: 5;
+  --glow-duration:        2500;
+  --glow-base-blur:       18;
+  --glow-amplitude:       10;
+  --glow-phase-step:      0.08;
+  --overlay-close-delay:  300;
+  --transition-fast:      200ms;
+
+  /* Easing constants */
+  --ease-decay-rate:        12;
+  --wobble-threshold:       0.85;
+  --wobble-frequency:       66;
+  --wobble-intensity:       0.002;
+  --wobble-damping:         6.67;
+  --tick-cutoff:            0.95;
+
+  /* Persistence */
+  --storage-key: "sn-spin-history";
 }
-button{
-  margin-top:20px;
-  padding:14px 28px;
-  font-size:18px;
-  font-weight:800;
-  background:#6f2dbd;
-  color:#fff;
-  border:none;
-  border-radius:12px;
-  cursor:pointer;
+
+/* --- Base -------------------------------------------------- */
+html {
+  scroll-behavior: smooth;
 }
-button:hover{ background:#5b22a0; }
-.winner{ margin-top:16px; font-size:22px; font-weight:800; }
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+}
+
+/* --- Canvas ------------------------------------------------ */
+canvas {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+}
+
+.wheel-shadow {
+  box-shadow: 0 12px 40px rgba(var(--sn-navy-rgb), 0.25);
+}
+
+/* --- Tab Buttons ------------------------------------------- */
+.tab-btn {
+  border: none;
+  outline: none;
+  cursor: pointer;
+  transition: transform var(--transition-fast) ease,
+              background-color var(--transition-fast) ease;
+}
+
+.tab-btn:hover {
+  transform: translateY(-1px);
+}
+
+.tab-btn--active {
+  background-color: var(--sn-navy);
+  color: var(--sn-white);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.tab-btn--inactive {
+  background-color: var(--sn-white);
+  color: var(--sn-navy);
+  border: 2px solid rgba(var(--sn-navy-rgb), var(--opacity-border));
+}
+
+/* --- Winner Overlay ---------------------------------------- */
+#winner-overlay {
+  transition: opacity var(--transition-fast) ease;
+}
+
+/* --- History Table ----------------------------------------- */
+.history-row {
+  transition: background-color var(--transition-fast) ease;
+}
+
+.history-row:hover {
+  background-color: rgba(var(--sn-violet-rgb), var(--opacity-hover)) !important;
+}
+
+.history-row--even {
+  background-color: var(--sn-white);
+}
+
+.history-row--odd {
+  background-color: var(--sn-light);
+}
+
+/* --- Opacity color utilities ------------------------------- */
+/* Tailwind's /N opacity modifier doesn't work with var()-based
+   colors, so we define these from the RGB-channel tokens above. */
+
+.border-navy-10 { border-color: rgba(var(--sn-navy-rgb), 0.1); }
+
+.text-navy-40   { color: rgba(var(--sn-navy-rgb), 0.4); }
+.text-navy-50   { color: rgba(var(--sn-navy-rgb), 0.5); }
+.text-navy-60   { color: rgba(var(--sn-navy-rgb), 0.6); }
+
+.bg-navy-70     { background-color: rgba(var(--sn-navy-rgb), 0.7); }

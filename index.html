@@ -1,20 +1,123 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>Finance Team – Spin to Win</title>
-<link rel="stylesheet" href="styles/main.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Second Nature – Finance Team Spin to Win</title>
+
+  <!-- Styles: single source of truth for all design tokens -->
+  <link rel="stylesheet" href="styles/main.css">
+
+  <!-- Tailwind: colors reference CSS custom properties (no duplication) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="js/tailwind.config.js"></script>
 </head>
 
-<body>
-  <div class="header">
-    <div class="line1">Finance Team</div>
-    <div class="line2">SPIN TO WIN</div>
+<body class="min-h-screen bg-gradient-to-br from-sn-light to-white flex flex-col items-center animate-fade-in">
+
+  <!-- Header -->
+  <header class="w-full bg-sn-navy py-5 px-6 flex flex-col items-center gap-1 shadow-lg">
+    <div class="text-white text-2xl md:text-3xl font-light tracking-wider lowercase">second nature</div>
+    <div class="h-px w-16 bg-gradient-to-r from-sn-magenta to-sn-cyan opacity-60"></div>
+    <div class="text-sn-cyan text-xs md:text-sm font-bold tracking-[0.25em] uppercase mt-1">
+      Finance Team &mdash; Spin to Win
+    </div>
+  </header>
+
+  <!-- Tabs -->
+  <nav class="flex gap-2 mt-6 mb-2">
+    <button id="tab-wheel" onclick="switchTab('wheel')"
+      class="tab-btn tab-btn--active px-6 py-2 text-sm font-bold rounded-pill transition-all duration-200">
+      Wheel
+    </button>
+    <button id="tab-history" onclick="switchTab('history')"
+      class="tab-btn tab-btn--inactive px-6 py-2 text-sm font-bold rounded-pill transition-all duration-200">
+      History
+    </button>
+  </nav>
+
+  <!-- Wheel Section -->
+  <main id="section-wheel" class="flex flex-col items-center w-full max-w-2xl px-4">
+    <div id="status-badge"
+      class="mb-3 px-4 py-1.5 bg-white/80 backdrop-blur rounded-pill text-sm font-semibold text-sn-navy shadow-sm border border-navy-10">
+      Loading...
+    </div>
+
+    <div class="relative">
+      <canvas id="wheel"
+        class="rounded-full wheel-shadow max-w-[90vw] max-h-[90vw]">
+      </canvas>
+    </div>
+
+    <button id="spin-btn" onclick="spin()"
+      class="mt-6 px-10 py-4 text-xl font-black tracking-wide bg-sn-navy text-white rounded-pill
+             transition-all duration-200 hover:bg-sn-violet hover:scale-105 active:scale-95
+             disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:bg-sn-navy
+             shadow-lg hover:shadow-xl">
+      SPIN
+    </button>
+
+    <div id="all-picked" class="hidden mt-4 text-center">
+      <p class="text-sn-violet font-bold text-lg mb-2">Everyone has been picked!</p>
+      <button onclick="clearHistory()"
+        class="px-6 py-2 bg-sn-violet text-white font-bold rounded-pill hover:bg-sn-magenta transition-all duration-200">
+        Clear &amp; Restart
+      </button>
+    </div>
+  </main>
+
+  <!-- History Section -->
+  <section id="section-history" class="hidden flex flex-col items-center w-full max-w-2xl px-4 mt-2">
+    <div class="w-full bg-white rounded-2xl shadow-lg overflow-hidden border border-navy-10">
+      <div class="bg-sn-navy px-6 py-4 flex items-center justify-between">
+        <h2 class="text-white font-bold text-lg">Spin History</h2>
+        <button onclick="clearHistory()"
+          class="px-4 py-1.5 text-xs font-bold bg-sn-violet text-white rounded-pill hover:bg-sn-magenta transition-all duration-200">
+          Clear
+        </button>
+      </div>
+      <div id="history-content" class="p-4">
+        <p id="history-empty" class="text-center text-gray-400 py-8 text-sm">
+          No spins yet. Go spin the wheel!
+        </p>
+        <table id="history-table" class="hidden w-full text-left">
+          <thead>
+            <tr class="border-b-2 border-navy-10">
+              <th class="py-2 px-3 text-xs font-bold text-navy-60 uppercase tracking-wider w-12">#</th>
+              <th class="py-2 px-3 text-xs font-bold text-navy-60 uppercase tracking-wider">Name</th>
+              <th class="py-2 px-3 text-xs font-bold text-navy-60 uppercase tracking-wider text-right">Time</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Winner Overlay -->
+  <div id="winner-overlay"
+    class="hidden fixed inset-0 z-50 bg-navy-70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div id="winner-card"
+      class="bg-white rounded-2xl shadow-2xl p-8 text-center max-w-sm w-full animate-scale-in animate-pulse-glow">
+      <div class="text-sn-cyan font-bold text-sm uppercase tracking-[0.3em] mb-1">Winner</div>
+      <div id="winner-name" class="text-sn-violet font-black text-4xl md:text-5xl mb-6 leading-tight"></div>
+      <div class="flex flex-col gap-3">
+        <button onclick="closeOverlayAndSpin()"
+          class="px-8 py-3 bg-sn-navy text-white font-bold rounded-pill hover:bg-sn-violet transition-all duration-200 hover:scale-105 active:scale-95">
+          Spin Again
+        </button>
+        <button onclick="closeOverlay()"
+          class="text-navy-50 hover:text-sn-navy text-sm font-semibold transition-colors duration-200">
+          Close
+        </button>
+      </div>
+    </div>
   </div>
 
-  <canvas id="wheel" width="520" height="520"></canvas>
-  <button onclick="spin()">SPIN</button>
-  <div class="winner" id="winner">Winner: —</div>
+  <!-- Footer -->
+  <footer class="mt-auto py-4 text-center text-navy-40 text-xs font-semibold tracking-wide">
+    Second Nature &mdash; Finance Team 2026
+  </footer>
 
   <script src="js/wheel.js"></script>
 </body>
