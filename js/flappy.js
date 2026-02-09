@@ -31,7 +31,6 @@
 
   const TAU = Math.PI * 2;
   const DEG_TO_RAD = Math.PI / 180;
-  const MAX_DPR = 1;
 
   const CFG = {
     width:       BASE_W,
@@ -150,6 +149,7 @@
   let _pipeLipCanvas = null;   // pre-rendered pipe lip (offscreen canvas)
   let _buildingCanvases = [];  // pre-rendered building offscreen canvases (parallel to bgLayers.buildings)
   let _fpsString = '';         // cached FPS display string (rebuilt once/sec)
+  let _dpr = 1;               // device pixel ratio (set during init)
 
   /** Return max of fn(item) across arr without allocating a temporary array. */
   function maxOf(arr, fn) {
@@ -475,6 +475,7 @@
     }
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
+      if (e.repeat) return; // ignore held-key repeats
       flap();
     }
   }
@@ -575,14 +576,13 @@
     const cssW = Math.round(BASE_W * cssScale);
     const cssH = Math.round(BASE_H * cssScale);
 
-    // HiDPI: capped to MAX_DPR — flat-color geometric shapes don't benefit from Retina
-    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-    canvas.width  = BASE_W * dpr;
-    canvas.height = BASE_H * dpr;
-    // CSS display size scales to fit container
+    // HiDPI: render at native device resolution for crisp text on mobile
+    _dpr = window.devicePixelRatio || 1;
+    canvas.width  = BASE_W * _dpr;
+    canvas.height = BASE_H * _dpr;
     canvas.style.width  = cssW + 'px';
     canvas.style.height = cssH + 'px';
-    ctx.scale(dpr, dpr);
+    ctx.scale(_dpr, _dpr);
 
     // --- Show loading screen while assets load ---
     drawLoadingScreen(performance.now());
@@ -609,8 +609,9 @@
     {
       const lipW = CFG.pipeWidth + 8, lipH = 20, lipR = 8;
       const offC = document.createElement('canvas');
-      offC.width = lipW; offC.height = lipH;
+      offC.width = lipW * _dpr; offC.height = lipH * _dpr;
       const oCtx = offC.getContext('2d');
+      oCtx.scale(_dpr, _dpr);
       oCtx.fillStyle = CC.violet;
       oCtx.beginPath();
       oCtx.moveTo(lipR, 0);
@@ -624,6 +625,8 @@
       oCtx.quadraticCurveTo(0, 0, lipR, 0);
       oCtx.closePath();
       oCtx.fill();
+      offC._logW = lipW;
+      offC._logH = lipH;
       _pipeLipCanvas = offC;
     }
 
@@ -886,8 +889,9 @@
     const cW = Math.ceil(w + pad * 2);
     const cH = Math.ceil(h + pad * 2);
     const offC = document.createElement('canvas');
-    offC.width = cW; offC.height = cH;
+    offC.width = cW * _dpr; offC.height = cH * _dpr;
     const oCtx = offC.getContext('2d');
+    oCtx.scale(_dpr, _dpr);
     // Draw at full opacity — alpha is applied by the caller via ctx.globalAlpha
     oCtx.fillStyle = CC.cyan;
     oCtx.beginPath();
@@ -899,6 +903,8 @@
     oCtx.fill();
     c._canvas = offC;
     c._pad = pad;
+    c._logW = cW;
+    c._logH = cH;
   }
 
   /** Pre-render all cloud groups. Called once after initClouds + initBackground. */
@@ -1235,7 +1241,7 @@
       if (b.x + b.w < 0 || b.x > CFG.width) continue;
       const offC = _buildingCanvases[bi];
       if (offC) {
-        ctx.drawImage(offC, b.x - b._cacheOffX, b.y - b._cacheOffY);
+        ctx.drawImage(offC, b.x - b._cacheOffX, b.y - b._cacheOffY, b._cacheW, b._cacheH);
       } else {
         drawBuilding(b, navy, violet);
       }
@@ -1388,8 +1394,9 @@
     const cW = Math.ceil(b.w + extraLeft + extraRight + pad * 2);
     const cH = Math.ceil(b.h + extraTop + pad * 2);
     const offC = document.createElement('canvas');
-    offC.width = cW; offC.height = cH;
+    offC.width = cW * _dpr; offC.height = cH * _dpr;
     const oCtx = offC.getContext('2d');
+    oCtx.scale(_dpr, _dpr);
     const navy = CC.navy;
     const violet = CC.violet;
     // Offset so b.x=0 maps to extraLeft+pad, b.y maps to extraTop+pad
@@ -1767,7 +1774,7 @@
     for (let i = 0, len = cloudArr.length; i < len; i++) {
       const c = cloudArr[i];
       if (c._canvas) {
-        ctx.drawImage(c._canvas, c.x - c._pad, c.y - c._pad);
+        ctx.drawImage(c._canvas, c.x - c._pad, c.y - c._pad, c._logW, c._logH);
       }
     }
   }
@@ -1785,14 +1792,14 @@
     ctx.fillRect(0, -4, W, gT + 4);
 
     // Lip on top pipe (pre-rendered)
-    ctx.drawImage(_pipeLipCanvas, -4, gT - 20);
+    ctx.drawImage(_pipeLipCanvas, -4, gT - 20, _pipeLipCanvas._logW, _pipeLipCanvas._logH);
 
     // Bottom pipe body (plain fillRect)
     ctx.fillStyle = pipeGrad;
     ctx.fillRect(0, gB, W, CFG.height - gB);
 
     // Lip on bottom pipe (pre-rendered)
-    ctx.drawImage(_pipeLipCanvas, -4, gB);
+    ctx.drawImage(_pipeLipCanvas, -4, gB, _pipeLipCanvas._logW, _pipeLipCanvas._logH);
 
     ctx.translate(-p.x, 0);
   }
