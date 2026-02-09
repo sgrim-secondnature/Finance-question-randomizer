@@ -274,8 +274,10 @@ canvas {
   color: var(--sn-white);
 }
 
-/* Best score label in modal header */
+/* Best score label in modal header —
+   margin-left:auto keeps best + close right-aligned even when the diff button is hidden */
 .flappy-header-best {
+  margin-left: auto;
   font-size: 0.6rem;
   font-weight: 600;
   opacity: 0;

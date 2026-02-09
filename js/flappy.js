@@ -148,6 +148,7 @@
   /* --- State ------------------------------------------------- */
   let heart, overlay;
   let gameOpen   = false;
+  let hasPlayedOnce = false; // true after the first flap — keeps header diff btn visible on reset
   let canvas, ctx, rafId;
   let bird, pipes, clouds, score, state; // 'idle' | 'play' | 'dead' | 'paused'
   let lastPipeTime, deadTime, frameTime;
@@ -331,7 +332,7 @@
             <path d="M16 1.88647C8.01418 1.88647 2 7.9574 2 15.9999C2 24.0425 8.01418 30.1134 16 30.1134C23.9858 30.1134 30 24.0425 30 15.9999C30 7.9574 23.9858 1.88647 16 1.88647ZM23.1773 16.851L16.5957 23.4326C16.2553 23.773 15.6879 23.773 15.3475 23.4326L8.9078 16.9929C7.33333 15.4184 7.06383 12.8794 8.42553 11.1205C10.0709 8.99286 13.1489 8.85101 14.9929 10.695L15.9716 11.6737L16.8511 10.7943C18.539 9.09215 21.3333 8.92194 23.078 10.5673C24.8794 12.2695 24.922 15.1063 23.1773 16.851Z" fill="${COLORS.magenta()}"/>
           </svg>
           <span>Flappy Nature</span>
-          <button id="flappy-diff-btn" class="flappy-header-diff" title="Change difficulty"></button>
+          <button id="flappy-diff-btn" class="flappy-header-diff" title="Change difficulty" style="display:none"></button>
           <span id="flappy-best" class="flappy-header-best"></span>
           <button class="flappy-modal__close" aria-label="Close game" title="Close">&times;</button>
         </div>
@@ -386,18 +387,21 @@
     if (!card) return;
     card.classList.add('flappy-title-card--out');
     setTimeout(() => { card.remove(); }, 350);
-    updateHeader();
-    // Start actual gameplay
+    // Start actual gameplay — flap() transitions from idle→play and calls updateHeader()
     flap();
   }
 
-  /** Update both header elements (difficulty badge + best score) to reflect current state */
+  /** Update both header elements (difficulty badge + best score) to reflect current state.
+   *  The difficulty button stays hidden until the game leaves 'idle' (title card dismissed). */
   function updateHeader() {
     const diffBtn = document.getElementById('flappy-diff-btn');
     const bestEl  = document.getElementById('flappy-best');
     const best    = bestScore();
     if (diffBtn) {
       diffBtn.textContent = DIFF_LABELS[currentDifficulty] || 'Normal';
+      // Show the header difficulty button once the player has started at least once
+      const showDiff = hasPlayedOnce || (state && state !== 'idle');
+      diffBtn.style.display = showDiff ? '' : 'none';
       diffBtn.style.opacity = '1';
     }
     if (bestEl) {
@@ -409,6 +413,7 @@
   /** Clicking the header difficulty badge toggles the canvas picker (always pauses) */
   function onHeaderDiffClick(e) {
     e.stopPropagation(); // don't bubble to backdrop close
+    if (state === 'idle' && !hasPlayedOnce) return; // ignore clicks before first play
     if (settingsOpen) {
       closeDiffPicker();
     } else {
@@ -418,6 +423,7 @@
 
   function closeGame() {
     stopGame();
+    hasPlayedOnce = false;
     overlay.classList.remove('visible');
     setTimeout(() => {
       overlay.classList.add('hidden');
@@ -553,8 +559,9 @@
         card.classList.add('flappy-title-card--out');
         setTimeout(() => { card.remove(); }, 350);
       }
-      updateHeader();
       state = 'play';
+      hasPlayedOnce = true;
+      updateHeader();
       bird.vy = CFG.flapForce;
       lastPipeTime = performance.now();
       hintStartTime = performance.now();
@@ -1465,6 +1472,7 @@
     drawSettingsBtn();
 
     // Overlays
+    if (state === 'idle' && !document.getElementById('flappy-title-card')) drawReadyScreen();
     if (state === 'dead') drawDeadScreen();
     if (state === 'paused' || settingsOpen) drawDiffPicker();
   }
@@ -1680,6 +1688,57 @@
         ctx.globalAlpha = 1;
       }
     }
+
+    ctx.restore();
+  }
+
+  /* --- Ready screen (canvas-drawn, shown after difficulty change resets to idle) --- */
+  function drawReadyScreen() {
+    ctx.save();
+
+    // Dim overlay
+    ctx.fillStyle = 'rgba(9, 9, 73, 0.35)';
+    ctx.fillRect(0, 0, CFG.width, CFG.height);
+
+    // Card
+    const cardW = 220;
+    const cardH = 140;
+    const cx    = (CFG.width  - cardW) / 2;
+    const cy    = (CFG.height - cardH) / 2 - 15;
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.09)';
+    roundRect(cx + 2, cy + 5, cardW, cardH, 16);
+    ctx.fillStyle = 'rgba(0,0,0,0.05)';
+    roundRect(cx + 1, cy + 2, cardW, cardH, 16);
+    // Background
+    ctx.fillStyle = CC.white;
+    roundRect(cx, cy, cardW, cardH, 16);
+
+    // Heart icon
+    if (heartImg) {
+      const iconS = 32;
+      ctx.drawImage(heartImg, CFG.width / 2 - iconS / 2, cy + 16, iconS, iconS);
+    }
+
+    // Difficulty label
+    ctx.font = FONTS.deadScore;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = CC.violet;
+    ctx.fillText(DIFF_LABELS[currentDifficulty] || 'Normal', CFG.width / 2, cy + 72);
+
+    // Best score for this difficulty
+    const best = bestScore();
+    if (best > 0) {
+      ctx.fillStyle = CC.magenta;
+      ctx.fillText('Best: ' + best, CFG.width / 2, cy + 92);
+    }
+
+    // "Tap to play" prompt
+    ctx.font = FONTS.deadRetry;
+    ctx.fillStyle = CC.navy;
+    ctx.globalAlpha = 0.5;
+    ctx.fillText('Space / Click to play', CFG.width / 2, cy + 122);
+    ctx.globalAlpha = 1;
 
     ctx.restore();
   }
