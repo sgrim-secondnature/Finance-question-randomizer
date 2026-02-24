@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Score Migration Bridge</title>
+</head>
+<body>
+<script>
+  window.addEventListener('message', function(event) {
+    if (!event.data || event.data.type !== 'sn-migration-request' || event.data.version !== 1) {
+      return;
+    }
+    var scores = null;
+    var difficulty = null;
+    try {
+      var raw = localStorage.getItem('sn-flappy-best-v2');
+      if (raw) {
+        scores = JSON.parse(raw);
+      }
+      difficulty = localStorage.getItem('sn-flappy-diff');
+    } catch (e) {
+      // ignore
+    }
+    event.source.postMessage({
+      type: 'sn-migration-response',
+      version: 1,
+      scores: scores,
+      difficulty: difficulty
+    }, event.origin);
+  });
+</script>
+</body>
+</html>
